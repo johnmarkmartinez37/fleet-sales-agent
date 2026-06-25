@@ -24,7 +24,7 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
  
-html, body, [class*="css"] { font-family: 'Montserrat', sans-serif; font-size: 16px; }
+html, body, [class*="css"] { font-family: 'Montserrat', sans-serif; font-size: 15px; }
 #MainMenu, footer, header { visibility: hidden; }
 .block-container { padding-top: 0 !important; max-width: 95% !important; padding-left: 2rem !important; padding-right: 2rem !important; }
  
@@ -617,7 +617,7 @@ else:
         """, unsafe_allow_html=True)
  
     st.markdown('<div class="analysis-card"><div class="card-label">Executive Insight Summary</div>', unsafe_allow_html=True)
-    st.markdown(analysis)
+    st.markdown(analysis.replace("$", "\\$"))
     st.markdown('</div>', unsafe_allow_html=True)
  
     period_label = s.get("report_date") or s.get("period") or "report"
