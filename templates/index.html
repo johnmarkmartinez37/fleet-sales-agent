@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fleet Sales Intelligence — Love's</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --loves-red: #d90d0d;
+      --loves-red-dk: #a80a0a;
+      --loves-yellow: #f2ce1b;
+      --white: #ffffff;
+      --off-white: #f7f7f5;
+      --border: #e0e0e0;
+      --text: #1a1a1a;
+      --muted: #666666;
+      --green: #1a8a4a;
+      --radius: 8px;
+      --font-head: 'Montserrat', sans-serif;
+      --font-mono: 'DM Mono', monospace;
+      --font-body: 'Montserrat', sans-serif;
+    }
+    html, body {
+      background: var(--off-white);
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 15px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    header {
+      background: var(--white);
+      border-bottom: 3px solid var(--loves-red);
+      padding: 0 48px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 68px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .header-logo img { height: 48px; width: auto; display: block; }
+    .header-divider { width: 1px; height: 32px; background: var(--border); }
+    .header-title { font-family: var(--font-head); font-weight: 700; font-size: 16px; color: var(--text); }
+    .header-title span { color: var(--loves-red); }
+    .header-badge { margin-left: auto; background: var(--loves-yellow); color: #5a4000; font-family: var(--font-mono); font-size: 11px; font-weight: 500; padding: 4px 12px; border-radius: 20px; }
+    .top-banner { background: var(--loves-red); padding: 8px 48px; display: flex; align-items: center; gap: 16px; }
+    .banner-text { font-family: var(--font-mono); font-size: 11px; color: rgba(255,255,255,0.9); letter-spacing: 1px; text-transform: uppercase; }
+    .banner-dot { width: 4px; height: 4px; background: var(--loves-yellow); border-radius: 50%; flex-shrink: 0; }
+    main { max-width: 1200px; margin: 0 auto; padding: 48px 40px; }
+    .upload-section { margin-bottom: 48px; }
+    .eyebrow { font-family: var(--font-mono); font-size: 11px; color: var(--loves-red); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
+    .eyebrow::before { content: ''; display: block; width: 24px; height: 3px; background: var(--loves-yellow); border-radius: 2px; }
+    h1 { font-family: var(--font-head); font-size: 38px; font-weight: 800; letter-spacing: -1.5px; line-height: 1.05; margin-bottom: 14px; }
+    .subtitle { color: var(--muted); font-size: 15px; font-weight: 400; margin-bottom: 28px; max-width: 480px; line-height: 1.7; }
+    .mode-toggle { display: inline-flex; background: var(--white); border: 1.5px solid var(--border); border-radius: 10px; padding: 4px; margin-bottom: 32px; gap: 4px; }
+    .mode-btn { font-family: var(--font-head); font-weight: 700; font-size: 13px; padding: 10px 24px; border: none; background: transparent; color: var(--muted); border-radius: 7px; cursor: pointer; transition: all 0.2s; letter-spacing: 0.3px; }
+    .mode-btn.active { background: var(--loves-red); color: white; }
+    .upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .upload-grid.single { grid-template-columns: 1fr; max-width: 580px; }
+    .upload-box { background: var(--white); border: 2px dashed var(--border); border-radius: var(--radius); padding: 28px 24px; cursor: pointer; transition: border-color 0.2s, background 0.2s; position: relative; }
+    .upload-box:hover { border-color: var(--loves-red); background: #fff8f8; }
+    .upload-box.has-file { border-color: var(--green); border-style: solid; background: #f0faf4; }
+    .upload-box input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+    .upload-icon { width: 44px; height: 44px; background: #fff3f3; border: 1.5px solid #ffd0d0; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 14px; font-size: 20px; }
+    .upload-box.has-file .upload-icon { background: #e8f7ee; border-color: #a8dbb8; }
+    .upload-title { font-family: var(--font-head); font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+    .upload-desc { font-size: 13px; color: var(--muted); }
+    .file-name { display: none; font-family: var(--font-mono); font-size: 12px; color: var(--green); margin-top: 8px; word-break: break-all; }
+    .upload-box.has-file .file-name { display: block; }
+    .upload-box.has-file .upload-desc { display: none; }
+    .analyze-btn { width: 100%; padding: 16px; background: var(--loves-red); color: white; border: none; border-radius: var(--radius); font-family: var(--font-head); font-weight: 800; font-size: 15px; cursor: pointer; transition: background 0.2s; text-transform: uppercase; letter-spacing: 0.5px; }
+    .analyze-btn:hover { background: var(--loves-red-dk); }
+    .analyze-btn:disabled { background: #cccccc; color: #999999; cursor: not-allowed; }
+    .loading { display: none; text-align: center; padding: 80px 0; }
+    .loading.visible { display: block; }
+    .spinner { width: 48px; height: 48px; border: 4px solid var(--border); border-top-color: var(--loves-red); border-right-color: var(--loves-yellow); border-radius: 50%; animation: spin 0.9s linear infinite; margin: 0 auto 24px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { font-family: var(--font-head); font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+    .loading-sub { font-size: 13px; color: var(--muted); }
+    #results { display: none; }
+    #results.visible { display: block; }
+    .results-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; padding-bottom: 20px; border-bottom: 3px solid var(--loves-red); }
+    .results-title { font-family: var(--font-head); font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
+    .results-title span { color: var(--loves-red); }
+    .report-date { font-family: var(--font-mono); font-size: 12px; color: var(--muted); background: var(--white); border: 1px solid var(--border); padding: 5px 12px; border-radius: 20px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 28px; }
+    .stat-card { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 16px; border-top: 4px solid var(--border); }
+    .stat-card.danger { border-top-color: var(--loves-red); }
+    .stat-card.warning { border-top-color: var(--loves-yellow); }
+    .stat-card.good { border-top-color: var(--green); }
+    .stat-value { font-family: var(--font-head); font-size: 28px; font-weight: 800; line-height: 1; margin-bottom: 6px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stat-card.danger .stat-value { color: var(--loves-red); }
+    .stat-card.warning .stat-value { color: #8a6800; }
+    .stat-card.good .stat-value { color: var(--green); }
+    .stat-label { font-size: 12px; color: var(--muted); font-weight: 500; }
+    .analysis-card { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px 32px; margin-bottom: 16px; }
+    .card-label { font-family: var(--font-mono); font-size: 11px; color: var(--loves-red); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; font-weight: 500; }
+    .card-label::before { content: ''; display: block; width: 20px; height: 3px; background: var(--loves-yellow); border-radius: 2px; }
+    .analysis-output { font-size: 14px; line-height: 1.7; color: var(--text); }
+    .analysis-output h1, .analysis-output h2 { font-family: var(--font-head); font-weight: 700; color: var(--text); margin-top: 20px; margin-bottom: 8px; font-size: 16px; border-bottom: 2px solid var(--loves-red); padding-bottom: 6px; }
+    .analysis-output h3 { font-family: var(--font-head); font-weight: 600; font-size: 14px; color: var(--text); margin-top: 14px; margin-bottom: 6px; }
+    .analysis-output p { margin-bottom: 8px; }
+    .analysis-output ul { padding-left: 20px; margin-bottom: 8px; }
+    .analysis-output li { margin-bottom: 4px; }
+    .analysis-output table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0 16px 0; }
+    .analysis-output table th { text-align: left; padding: 10px 14px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); border-bottom: 2px solid var(--border); font-weight: 500; background: var(--off-white); text-transform: uppercase; letter-spacing: 0.5px; }
+    .analysis-output table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--text); }
+    .analysis-output table tr:last-child td { border-bottom: none; }
+    .analysis-output table tr:hover td { background: #fafafa; }
+    .alert-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 12px; }
+    .alert-table th { text-align: left; padding: 10px 14px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); border-bottom: 2px solid var(--border); font-weight: 500; background: var(--off-white); text-transform: uppercase; letter-spacing: 0.5px; }
+    .alert-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--text); }
+    .alert-table tr:last-child td { border-bottom: none; }
+    .alert-table tr:hover td { background: #fafafa; }
+    .badge { display: inline-block; font-family: var(--font-mono); font-size: 11px; padding: 3px 8px; border-radius: 4px; font-weight: 500; }
+    .badge-red { background: rgba(204,0,0,0.12); color: #8b0000; }
+    .pct-neg { color: var(--loves-red); font-family: var(--font-mono); font-weight: 600; }
+    .pct-pos { color: var(--green); font-family: var(--font-mono); font-weight: 600; }
+    .btn-row { display: flex; align-items: center; gap: 10px; }
+    .copy-btn { background: var(--loves-red); border: none; color: white; padding: 8px 20px; border-radius: 6px; font-family: var(--font-head); font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    .copy-btn:hover { background: var(--loves-red-dk); }
+    .reset-btn { background: transparent; border: 1.5px solid var(--border); color: var(--muted); padding: 8px 20px; border-radius: 6px; font-family: var(--font-head); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+    .reset-btn:hover { color: var(--text); border-color: #999; }
+    .error-box { display: none; background: #fff0f0; border: 1.5px solid #ffb3b3; border-radius: var(--radius); padding: 14px 18px; color: #8b0000; font-size: 14px; margin-top: 14px; font-weight: 500; }
+    .error-box.visible { display: block; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-logo"><img src="/static/loveslogo.webp" alt="Love's Travel Stops" /></div>
+  <div class="header-divider"></div>
+  <div class="header-title">Fleet Sales <span>Intelligence</span></div>
+  <div class="header-badge">Powered by Claude Opus</div>
+</header>
+
+<div class="top-banner">
+  <div class="banner-dot"></div>
+  <div class="banner-text">Fleet Sales Analysis Portal</div>
+  <div class="banner-dot"></div>
+  <div class="banner-text">Internal Use Only</div>
+  <div class="banner-dot"></div>
+  <div class="banner-text">AI Powered</div>
+</div>
+
+<main>
+  <div class="upload-section" id="upload-section">
+    <div class="eyebrow">Analysis Portal</div>
+    <h1>Fleet Intelligence<br>for Love's Sales Team</h1>
+    <p class="subtitle">Choose an analysis type, upload your report, and get an executive-ready insight summary in seconds.</p>
+
+    <div class="mode-toggle">
+      <button class="mode-btn active" id="mode-weekly" onclick="setMode('weekly')">Weekly Analysis</button>
+      <button class="mode-btn" id="mode-monthly" onclick="setMode('monthly')">Monthly Analysis</button>
+    </div>
+
+    <div id="weekly-uploads">
+      <div class="upload-grid">
+        <div class="upload-box" id="customer-box">
+          <input type="file" id="customer-file" accept=".xlsx,.xls" />
+          <div class="upload-icon">📊</div>
+          <div class="upload-title">Customer Report</div>
+          <div class="upload-desc">Trend report by customer account</div>
+          <div class="file-name" id="customer-name"></div>
+        </div>
+        <div class="upload-box" id="region-box">
+          <input type="file" id="region-file" accept=".xlsx,.xls" />
+          <div class="upload-icon">🗺️</div>
+          <div class="upload-title">Region Report</div>
+          <div class="upload-desc">Trend report by sales region</div>
+          <div class="file-name" id="region-name"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="monthly-uploads" class="hidden">
+      <div class="upload-grid single">
+        <div class="upload-box" id="monthly-box">
+          <input type="file" id="monthly-file" accept=".xlsx,.xls" />
+          <div class="upload-icon">📅</div>
+          <div class="upload-title">Monthly Sales Report</div>
+          <div class="upload-desc">Full monthly report with rollups and 13-month history</div>
+          <div class="file-name" id="monthly-name"></div>
+        </div>
+      </div>
+    </div>
+
+    <button class="analyze-btn" id="analyze-btn" disabled onclick="runAnalysis()">Upload one or both reports to analyze</button>
+    <div class="error-box" id="error-box"></div>
+  </div>
+
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div class="loading-text">Analyzing your report...</div>
+    <div class="loading-sub">Claude is processing the data. This takes about 60 seconds.</div>
+  </div>
+
+  <div id="results">
+    <div class="results-header">
+      <div class="results-title">Fleet Sales <span>Insights</span></div>
+      <div class="btn-row">
+        <div class="report-date" id="report-date-display"></div>
+        <button class="copy-btn" onclick="copyAnalysis()">Copy Analysis</button>
+        <button class="reset-btn" onclick="resetPortal()">New Analysis</button>
+      </div>
+    </div>
+
+    <div class="stats-grid" id="stats-grid"></div>
+
+    <div class="analysis-card">
+      <div class="card-label">Executive Insight Summary</div>
+      <div class="analysis-output" id="analysis-output"></div>
+    </div>
+
+    <div id="weekly-tables">
+      <div class="analysis-card">
+        <div class="card-label">Top Fuel Decrease Alerts — Main Accounts</div>
+        <table class="alert-table">
+          <thead>
+            <tr><th>Account</th><th>Region</th><th>Salesperson</th><th>Area Manager</th><th>This Week</th><th>Prior Week</th><th>WoW Change</th><th>Vol Change</th><th>Bucket</th></tr>
+          </thead>
+          <tbody id="alerts-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="monthly-tables" class="hidden">
+      <div class="analysis-card">
+        <div class="card-label">Declining Accounts — Recent Multi-Month Window</div>
+        <table class="alert-table">
+          <thead>
+            <tr><th>Account</th><th>Region</th><th>4 Months Ago</th><th>Most Recent Month</th><th>Decline</th><th>Volume Lost</th></tr>
+          </thead>
+          <tbody id="trend-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+<div id="chat-section" class="hidden">
+      <div class="analysis-card">
+        <div class="card-label">Ask a Follow-Up Question</div>
+        <div id="chat-messages" style="min-height: 60px; margin-bottom: 16px;"></div>
+        <div style="display: flex; gap: 10px;">
+          <input type="text" id="chat-input" placeholder="Ask about the data — e.g. which rep has the most newly dark accounts?" style="flex: 1; padding: 12px 16px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: var(--font-body); font-size: 14px; outline: none;" />
+          <button onclick="sendChat()" id="chat-btn" style="padding: 12px 24px; background: var(--loves-red); color: white; border: none; border-radius: var(--radius); font-family: var(--font-head); font-weight: 700; font-size: 14px; cursor: pointer;">Ask</button>
+        </div>
+      </div>
+    </div>
+</main>
+
+<script>
+  let currentMode = 'weekly';
+  const customerFile = document.getElementById('customer-file');
+  const regionFile = document.getElementById('region-file');
+  const monthlyFile = document.getElementById('monthly-file');
+  const customerBox = document.getElementById('customer-box');
+  const regionBox = document.getElementById('region-box');
+  const monthlyBox = document.getElementById('monthly-box');
+  const analyzeBtn = document.getElementById('analyze-btn');
+
+  function setMode(mode) {
+    currentMode = mode;
+    document.getElementById('mode-weekly').classList.toggle('active', mode === 'weekly');
+    document.getElementById('mode-monthly').classList.toggle('active', mode === 'monthly');
+    document.getElementById('weekly-uploads').classList.toggle('hidden', mode !== 'weekly');
+    document.getElementById('monthly-uploads').classList.toggle('hidden', mode !== 'monthly');
+    resetPortal();
+  }
+
+  function handleFileSelect(input, box, nameEl) {
+    input.addEventListener('change', () => {
+      if (input.files.length > 0) {
+        box.classList.add('has-file');
+        document.getElementById(nameEl).textContent = input.files[0].name;
+        box.querySelector('.upload-icon').textContent = '✅';
+      }
+      updateBtn();
+    });
+  }
+
+  handleFileSelect(customerFile, customerBox, 'customer-name');
+  handleFileSelect(regionFile, regionBox, 'region-name');
+  handleFileSelect(monthlyFile, monthlyBox, 'monthly-name');
+
+  function updateBtn() {
+    let ready;
+    if (currentMode === 'weekly') {
+      ready = customerFile.files.length > 0 || regionFile.files.length > 0;
+      analyzeBtn.textContent = ready ? 'ANALYZE REPORTS' : 'Upload one or both reports to analyze';
+    } else {
+      ready = monthlyFile.files.length > 0;
+      analyzeBtn.textContent = ready ? 'ANALYZE REPORT' : 'Upload the monthly report to analyze';
+    }
+    analyzeBtn.disabled = !ready;
+  }
+
+  [customerBox, regionBox, monthlyBox].forEach(box => {
+    box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('dragover'); });
+    box.addEventListener('dragleave', () => box.classList.remove('dragover'));
+    box.addEventListener('drop', e => {
+      e.preventDefault();
+      box.classList.remove('dragover');
+      const input = box.querySelector('input[type="file"]');
+      input.files = e.dataTransfer.files;
+      input.dispatchEvent(new Event('change'));
+    });
+  });
+
+  async function runAnalysis() {
+    const errorBox = document.getElementById('error-box');
+    errorBox.classList.remove('visible');
+    document.getElementById('upload-section').style.display = 'none';
+    document.getElementById('loading').classList.add('visible');
+    document.getElementById('results').classList.remove('visible');
+
+    const formData = new FormData();
+    formData.append('mode', currentMode);
+    if (currentMode === 'weekly') {
+      if (customerFile.files[0]) formData.append('customer_report', customerFile.files[0]);
+      if (regionFile.files[0]) formData.append('region_report', regionFile.files[0]);
+    } else {
+      if (monthlyFile.files[0]) formData.append('monthly_report', monthlyFile.files[0]);
+    }
+
+    try {
+      const res = await fetch('/analyze', { method: 'POST', body: formData });
+      const data = await res.json();
+      document.getElementById('loading').classList.remove('visible');
+
+      if (!res.ok || data.error) {
+        showError(data.error || 'An unexpected error occurred.');
+        document.getElementById('upload-section').style.display = 'block';
+        return;
+      }
+
+      populateResults(data);
+      document.getElementById('results').classList.add('visible');
+    } catch (err) {
+      document.getElementById('loading').classList.remove('visible');
+      document.getElementById('upload-section').style.display = 'block';
+      showError('Connection error. Make sure the server is running.');
+    }
+  }
+
+  function showError(msg) {
+    const box = document.getElementById('error-box');
+    box.textContent = msg;
+    box.classList.add('visible');
+  }
+
+  function populateResults(data) {
+    const s = data.summary;
+    const statsGrid = document.getElementById('stats-grid');
+    document.getElementById('analysis-output').innerHTML = marked.parse(data.analysis);
+    chatContext = data.analysis;
+    document.getElementById('chat-section').classList.remove('hidden');
+    document.getElementById('report-date-display').textContent = `Period ${s.report_date}`;
+
+    if (data.mode === 'monthly') {
+      document.getElementById('weekly-tables').classList.add('hidden');
+      document.getElementById('monthly-tables').classList.remove('hidden');
+      statsGrid.innerHTML = `
+        <div class="stat-card"><div class="stat-value">${s.region_count}</div><div class="stat-label">Regions</div></div>
+        <div class="stat-card"><div class="stat-value">${s.manager_count}</div><div class="stat-label">Area Managers</div></div>
+        <div class="stat-card danger"><div class="stat-value">${s.declining_count}</div><div class="stat-label">Declining Accounts (${s.trend_window}-Mo)</div></div>
+      `;
+      const tb = document.getElementById('trend-tbody');
+      tb.innerHTML = '';
+      (data.raw_results.trend_declining || []).forEach(t => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td><strong>${t.customer}</strong></td><td>${t.region || '—'}</td><td>${fmt(t.window_start)}</td><td>${fmt(t.recent_month)}</td><td class="pct-neg">${fmtPct(t.drop_pct)}</td><td class="pct-neg">${fmt(t.drop_vol)}</td>`;
+        tb.appendChild(tr);
+      });
+    } else {
+      document.getElementById('monthly-tables').classList.add('hidden');
+      document.getElementById('weekly-tables').classList.remove('hidden');
+
+      const bestWow = s.best_region_wow != null ? ((s.best_region_wow > 0 ? '+' : '') + Number(s.best_region_wow).toFixed(1) + '%') : 'N/A';
+      const worstWow = s.worst_region_wow != null ? ((s.worst_region_wow > 0 ? '+' : '') + Number(s.worst_region_wow).toFixed(1) + '%') : 'N/A';
+      const natVol = s.national_volume != null ? (s.national_volume / 1000000).toFixed(1) + 'M' : 'N/A';
+      const natWow = s.national_wow != null ? ((s.national_wow > 0 ? '+' : '') + Number(s.national_wow).toFixed(1) + '%') : '';
+
+      statsGrid.innerHTML = `
+        <div class="stat-card good">
+          <div class="stat-value" title="${s.best_region_name || '—'}">${s.best_region_name || '—'}</div>
+          <div class="stat-label">Best Region WoW (${bestWow})</div>
+        </div>
+        <div class="stat-card danger">
+          <div class="stat-value" title="${s.worst_region_name || '—'}">${s.worst_region_name || '—'}</div>
+          <div class="stat-label">Worst Region WoW (${worstWow})</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${natVol}</div>
+          <div class="stat-label">National Fuel Volume ${natWow ? '(WoW: ' + natWow + ')' : ''}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${s.region_count}</div>
+          <div class="stat-label">Regions Tracked</div>
+        </div>
+        <div class="stat-card danger">
+          <div class="stat-value">${s.newly_dark_count}</div>
+          <div class="stat-label">Newly Dark Accounts</div>
+        </div>
+      `;
+
+      const tbody = document.getElementById('alerts-tbody');
+      tbody.innerHTML = '';
+      (data.raw_results.fuel_main_alerts || []).slice(0, 5).forEach(a => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td><strong>${a.customer}</strong></td><td>${a.region || '—'}</td><td>${a.salesperson || '—'}</td><td>${a.area_manager || '—'}</td><td>${fmt(a.current_week)}</td><td>${fmt(a.prior_week)}</td><td class="pct-neg">${fmtPct(a.wow_pct)}</td><td>${fmt(a.vol_change)}</td><td><span class="badge badge-red">${a.bucket}</span></td>`;
+        tbody.appendChild(tr);
+      });
+    }
+  }
+
+  function fmt(val) {
+    if (val == null) return '—';
+    return Number(val).toLocaleString('en-US', {maximumFractionDigits: 0});
+  }
+
+  function fmtPct(val) {
+    if (val == null) return '—';
+    const sign = val > 0 ? '+' : '';
+    return `${sign}${Number(val).toFixed(1)}%`;
+  }
+
+  function copyAnalysis() {
+    const text = document.getElementById('analysis-output').innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.querySelector('.copy-btn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy Analysis', 2000);
+    });
+  }
+let chatContext = "";
+
+  function sendChat() {
+    const input = document.getElementById('chat-input');
+    const question = input.value.trim();
+    if (!question || !chatContext) return;
+
+    const messages = document.getElementById('chat-messages');
+    messages.innerHTML += `<div style="margin-bottom: 10px;"><span style="font-family: var(--font-head); font-weight: 700; font-size: 13px;">You:</span> <span style="font-size: 14px;">${question}</span></div>`;
+    messages.innerHTML += `<div id="chat-thinking" style="margin-bottom: 10px; color: var(--muted); font-size: 13px; font-style: italic;">Thinking...</div>`;
+    input.value = '';
+    document.getElementById('chat-btn').disabled = true;
+
+    fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, context: chatContext })
+    })
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('chat-thinking').remove();
+      document.getElementById('chat-btn').disabled = false;
+      if (data.error) {
+        messages.innerHTML += `<div style="color: var(--loves-red); font-size: 14px; margin-bottom: 10px;">Error: ${data.error}</div>`;
+      } else {
+        messages.innerHTML += `<div style="margin-bottom: 16px; padding: 12px 16px; background: var(--off-white); border-radius: var(--radius); font-size: 14px; line-height: 1.6;">${data.answer.replace(/\n/g, '<br>')}</div>`;
+      }
+      messages.scrollTop = messages.scrollHeight;
+    })
+    .catch(() => {
+      document.getElementById('chat-thinking').remove();
+      document.getElementById('chat-btn').disabled = false;
+      messages.innerHTML += `<div style="color: var(--loves-red); font-size: 14px; margin-bottom: 10px;">Connection error.</div>`;
+    });
+  }
+
+  document.getElementById('chat-input').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') sendChat();
+  });
+  function resetPortal() {
+    document.getElementById('results').classList.remove('visible');
+    document.getElementById('upload-section').style.display = 'block';
+    customerFile.value = '';
+    regionFile.value = '';
+    monthlyFile.value = '';
+    [customerBox, regionBox, monthlyBox].forEach(box => box.classList.remove('has-file'));
+    customerBox.querySelector('.upload-icon').textContent = '📊';
+    regionBox.querySelector('.upload-icon').textContent = '🗺️';
+    monthlyBox.querySelector('.upload-icon').textContent = '📅';
+    document.getElementById('customer-name').textContent = '';
+    document.getElementById('region-name').textContent = '';
+    document.getElementById('monthly-name').textContent = '';
+    document.getElementById('chat-messages').innerHTML = '';
+    document.getElementById('chat-input').value = '';
+    document.getElementById('chat-section').classList.add('hidden');
+    updateBtn();
+  }
+</script>
+
+</body>
+</html>
