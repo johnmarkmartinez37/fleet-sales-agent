@@ -3,7 +3,7 @@ import streamlit as st
 import tempfile
 import os
 import anthropic
-import httpx
+import httpx2
 from PIL import Image
  
 # ── Page config ────────────────────────────────────────────────────────────────
@@ -480,7 +480,7 @@ if st.session_state.analysis is None:
                     prompt = build_claude_prompt(results)
                     client = anthropic.Anthropic(
                         api_key=get_api_key(),
-                        http_client=httpx.Client(verify=False)
+                        http_client=httpx2.Client(verify=False)
                     )
                     message = client.messages.create(
                         model="claude-opus-4-6",
@@ -543,7 +543,7 @@ if st.session_state.analysis is None:
                     prompt = build_monthly_prompt(results)
                     client = anthropic.Anthropic(
                         api_key=get_api_key(),
-                        http_client=httpx.Client(verify=False)
+                        http_client=httpx2.Client(verify=False)
                     )
                     message = client.messages.create(
                         model="claude-opus-4-6",
@@ -681,7 +681,7 @@ else:
                 try:
                     client = anthropic.Anthropic(
                         api_key=get_api_key(),
-                        http_client=httpx.Client(verify=False)
+                        http_client=httpx2.Client(verify=False)
                     )
                     message = client.messages.create(
                         model="claude-opus-4-6",
