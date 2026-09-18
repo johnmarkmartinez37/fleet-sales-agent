@@ -201,7 +201,7 @@ def build_claude_prompt(results):
             f"WoW: {fmt_pct(r['wow_pct'])}"
         )
     lines.append(f"\nFUEL DECREASE ALERTS — MAIN ACCOUNTS (>=10,000 GAL avg, >=5,000 GAL current): {len(results['fuel_main_alerts'])} flagged")
-    for a in results["fuel_main_alerts"][:50]:
+    for a in results["fuel_main_alerts"][:75]:
         lines.append(
             f"  [{a['bucket']}] {a['customer']} | Region: {a['region']} | "
             f"Rep: {a['salesperson'] or 'N/A'} | Mgr: {a['area_manager'] or 'N/A'} | "
@@ -210,11 +210,13 @@ def build_claude_prompt(results):
             f"Change: {fmt_pct(a['wow_pct'])} ({fmt_num(a['vol_change'], 'GAL')} vol)"
         )
     lines.append(f"\nFUEL DECREASE ALERTS — SECONDARY ACCOUNTS (<10,000 GAL avg): {len(results['fuel_secondary'])} flagged")
-    for a in results["fuel_secondary"][:20]:
+    for a in results["fuel_secondary"][:100]:
         lines.append(
             f"  [{a['bucket']}] {a['customer']} | Region: {a['region']} | "
-            f"Rep: {a['salesperson'] or 'N/A'} | "
-            f"WoW: {fmt_pct(a['wow_pct'])} | Vol: {fmt_num(a['vol_change'], 'GAL')}"
+            f"Rep: {a['salesperson'] or 'N/A'} | Mgr: {a['area_manager'] or 'N/A'} | "
+            f"This week: {fmt_num(a['current_week'], 'GAL')} | "
+            f"Prior: {fmt_num(a['prior_week'], 'GAL')} | "
+            f"Change: {fmt_pct(a['wow_pct'])} ({fmt_num(a['vol_change'], 'GAL')} vol)"
         )
     lines.append(f"\nNEWLY DARK ACCOUNTS (13wk avg >= 1,000 GAL, zero this period): {len(results['fuel_newly_dark'])} accounts")
     for a in results["fuel_newly_dark"]:
@@ -225,7 +227,7 @@ def build_claude_prompt(results):
             f"Last Known Vol: {fmt_num(a['last_known_vol'], 'GAL')}"
         )
     lines.append(f"\nFUEL INCREASES (sorted by volume gained): {len(results['fuel_increases'])} accounts")
-    for a in results["fuel_increases"][:20]:
+    for a in results["fuel_increases"][:100]:
         wow_display = "N/A (returning from near-zero)" if a.get("suppress_pct") else fmt_pct(a['wow_pct'])
         lines.append(
             f"  {a['customer']} | Region: {a['region']} | "
@@ -251,11 +253,11 @@ def build_claude_prompt(results):
             lines.append(f"  {e}")
     prompt = "\n".join(lines)
     prompt += """
- 
+
 ---
 INSTRUCTIONS:
 You are the Fleet Sales Intelligence Agent for Love's Travel Stops fleet sales team. Using the structured data provided above, generate a professional executive insight summary for SVP-level leadership.
- 
+
 TONE AND STYLE:
 - Write as a senior analyst. Direct, confident, factual.
 - Present information as observations and insights -- not directives or prescriptions.
@@ -268,29 +270,29 @@ TONE AND STYLE:
 - Reference area manager alongside salesperson when available
 - Keep sections tight -- no extra blank lines between sections, no padding
 - Minimize bold formatting. Use bold only for section headers, never for account names, rep names, metrics, or numbers in the text.
- 
+
 OUTPUT FORMAT -- follow this exact order:
- 
+
 ## FLEET SALES INTELLIGENCE BRIEF
 **Period Ending: [DATE]**
- 
+
 ## 1. OPENING
 2-3 bullet points. Total fuel volume vs. rolling average. Standout regional trend. National performance direction.
- 
+
 ## 2. REGIONAL HIGHLIGHTS
 ### Top 3 Performing Regions
 Table with columns: Rank | Region | Rep | Current Volume | WoW Change | vs. 13Wk Avg
 After table: 2-3 bullets with context on what's driving each region's performance.
- 
+
 ### Bottom 3 Underperforming Regions
 Same table format.
 After table: 2-3 bullets with context on which accounts are driving underperformance in each region.
- 
+
 ## 3. NEWLY DARK ACCOUNTS
 Table with columns: Account | Region | Rep | Area Manager | 13Wk Avg | This Week | Last Known Volume
 The This Week column should show 0 GAL for every row. State it plainly.
 After table: 2-3 bullets noting patterns in regions or reps with multiple dark accounts.
- 
+
 ## 4. FUEL DECREASE ALERTS
 Group by bucket: 20-30%, then 10-20%, then 0-10%.
 ### 20-30% Decrease
@@ -300,21 +302,21 @@ Same table format.
 ### 0-10% Decrease
 Same table format.
 After all buckets: 2-3 bullets noting rep or region concentration.
- 
+
 ## 5. FUEL INCREASES
 Table: Account | Region | Rep | This Week | Prior Week | WoW Change | Vol Gained
 Sorted by absolute volume gained. If WoW reads "N/A (returning from near-zero)", display as "—".
 After table: 2-3 bullets with top volume gainers.
- 
+
 ## 6. NON-FUEL HIGHLIGHTS
 For each metric (Tires, PM, TCE Spend per Truck, Labor Hours), 2-3 bullets covering steepest movers.
- 
+
 ## 7. KEY TAKEAWAYS
 3 bullets. Each names a specific account or rep, states a specific number, surfaces an observation.
- 
+
 ## 8. CLOSING
 One sentence. Factual only.
- 
+
 DATA CONTEXT:
 - Main accounts: 13-week average >= 10,000 GAL and current week >= 5,000 GAL
 - Secondary accounts: below those thresholds
@@ -325,7 +327,6 @@ DATA CONTEXT:
 - Never fabricate data. Only report what is in the provided data.
 """
     return prompt
- 
  
 def build_monthly_prompt(results):
     period = results.get("period", "Unknown")
