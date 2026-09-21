@@ -219,44 +219,53 @@ def build_claude_prompt(results):
     regular_secondary = [a for a in results["fuel_secondary"] if not is_inside_sales(a["region"])]
     inside_secondary = [a for a in results["fuel_secondary"] if is_inside_sales(a["region"])]
 
-    lines.append(f"\nFUEL DECREASE ALERTS — MAIN ACCOUNTS, REGULAR REGIONS (>=10,000 GAL avg, >=5,000 GAL current): {len(regular_main)} flagged")
-    for a in regular_main[:75]:
-        lines.append(
-            f"  [{a['bucket']}] {a['customer']} | Region: {a['region']} | "
-            f"Rep: {a['salesperson'] or 'N/A'} | Mgr: {a['area_manager'] or 'N/A'} | "
-            f"This week: {fmt_num(a['current_week'], 'GAL')} | "
-            f"Prior: {fmt_num(a['prior_week'], 'GAL')} | "
-            f"Change: {fmt_pct(a['wow_pct'])} ({fmt_num(a['vol_change'], 'GAL')} vol)"
-        )
-    lines.append(f"\nFUEL DECREASE ALERTS — SECONDARY ACCOUNTS, REGULAR REGIONS (<10,000 GAL avg): {len(regular_secondary)} flagged")
-    for a in regular_secondary[:100]:
-        lines.append(
-            f"  [{a['bucket']}] {a['customer']} | Region: {a['region']} | "
-            f"Rep: {a['salesperson'] or 'N/A'} | Mgr: {a['area_manager'] or 'N/A'} | "
-            f"This week: {fmt_num(a['current_week'], 'GAL')} | "
-            f"Prior: {fmt_num(a['prior_week'], 'GAL')} | "
-            f"Change: {fmt_pct(a['wow_pct'])} ({fmt_num(a['vol_change'], 'GAL')} vol)"
-        )
+    all_accounts_for_scope = (
+        results["fuel_main_alerts"] + results["fuel_secondary"]
+        + results["fuel_increases"] + results["fuel_newly_dark"]
+    )
+    has_regular = any(not is_inside_sales(a["region"]) for a in all_accounts_for_scope)
+    has_inside = any(is_inside_sales(a["region"]) for a in all_accounts_for_scope)
 
-    inside_tiered = []
-    for a in inside_main + inside_secondary:
-        tier = gal_tier(a["vol_change"])
-        if tier is None:
-            continue
-        a_copy = dict(a)
-        a_copy["gal_tier"] = tier
-        inside_tiered.append(a_copy)
-    inside_tiered.sort(key=lambda x: x["vol_change"])
+    if has_regular:
+        lines.append(f"\nFUEL DECREASE ALERTS — MAIN ACCOUNTS, REGULAR REGIONS (>=10,000 GAL avg, >=5,000 GAL current): {len(regular_main)} flagged")
+        for a in regular_main[:75]:
+            lines.append(
+                f"  [{a['bucket']}] {a['customer']} | Region: {a['region']} | "
+                f"Rep: {a['salesperson'] or 'N/A'} | Mgr: {a['area_manager'] or 'N/A'} | "
+                f"This week: {fmt_num(a['current_week'], 'GAL')} | "
+                f"Prior: {fmt_num(a['prior_week'], 'GAL')} | "
+                f"Change: {fmt_pct(a['wow_pct'])} ({fmt_num(a['vol_change'], 'GAL')} vol)"
+            )
+        lines.append(f"\nFUEL DECREASE ALERTS — SECONDARY ACCOUNTS, REGULAR REGIONS (<10,000 GAL avg): {len(regular_secondary)} flagged")
+        for a in regular_secondary[:100]:
+            lines.append(
+                f"  [{a['bucket']}] {a['customer']} | Region: {a['region']} | "
+                f"Rep: {a['salesperson'] or 'N/A'} | Mgr: {a['area_manager'] or 'N/A'} | "
+                f"This week: {fmt_num(a['current_week'], 'GAL')} | "
+                f"Prior: {fmt_num(a['prior_week'], 'GAL')} | "
+                f"Change: {fmt_pct(a['wow_pct'])} ({fmt_num(a['vol_change'], 'GAL')} vol)"
+            )
 
-    lines.append(f"\nFUEL DECREASE ALERTS — INSIDE SALES REGIONS (tiered by GAL lost, not percentage; sorted largest loss first; under 100 GAL excluded; percentage intentionally omitted -- do not calculate or mention WoW% for these accounts): {len(inside_tiered)} flagged")
-    for a in inside_tiered[:100]:
-        lines.append(
-            f"  [{a['gal_tier']}] {a['customer']} | Region: {a['region']} | "
-            f"Rep: {a['salesperson'] or 'N/A'} | Mgr: {a['area_manager'] or 'N/A'} | "
-            f"This week: {fmt_num(a['current_week'], 'GAL')} | "
-            f"Prior: {fmt_num(a['prior_week'], 'GAL')} | "
-            f"Vol Change: {fmt_num(a['vol_change'], 'GAL')}"
-        )
+    if has_inside:
+        inside_tiered = []
+        for a in inside_main + inside_secondary:
+            tier = gal_tier(a["vol_change"])
+            if tier is None:
+                continue
+            a_copy = dict(a)
+            a_copy["gal_tier"] = tier
+            inside_tiered.append(a_copy)
+        inside_tiered.sort(key=lambda x: x["vol_change"])
+
+        lines.append(f"\nFUEL DECREASE ALERTS — INSIDE SALES REGIONS (tiered by GAL lost, not percentage; sorted largest loss first; under 100 GAL excluded; percentage intentionally omitted -- do not calculate or mention WoW% for these accounts): {len(inside_tiered)} flagged")
+        for a in inside_tiered[:100]:
+            lines.append(
+                f"  [{a['gal_tier']}] {a['customer']} | Region: {a['region']} | "
+                f"Rep: {a['salesperson'] or 'N/A'} | Mgr: {a['area_manager'] or 'N/A'} | "
+                f"This week: {fmt_num(a['current_week'], 'GAL')} | "
+                f"Prior: {fmt_num(a['prior_week'], 'GAL')} | "
+                f"Vol Change: {fmt_num(a['vol_change'], 'GAL')}"
+            )
 
     lines.append(f"\nNEWLY DARK ACCOUNTS (13wk avg >= 1,000 GAL, zero this period): {len(results['fuel_newly_dark'])} accounts")
     for a in results["fuel_newly_dark"]:
@@ -292,7 +301,51 @@ def build_claude_prompt(results):
         for e in results["errors"]:
             lines.append(f"  {e}")
     prompt = "\n".join(lines)
-    prompt += """
+
+    if has_regular and has_inside:
+        section_4_scope = "This upload contains BOTH regular regions and Inside Sales regions. Include both subsections below."
+        regular_block = """### Regular Regions
+Group by bucket: 20-30%, then 10-20%, then 0-10%.
+#### 20-30% Decrease
+Table: Account | Region | Rep | Area Manager | This Week | Prior Week | WoW Change | Vol Change
+#### 10-20% Decrease
+Same table format.
+#### 0-10% Decrease
+Same table format.
+"""
+        inside_block = """### Inside Sales Regions
+These are smaller-fleet regions where percentage swings are misleading -- a single truck can look like a 60% drop. Grouped by gallons lost instead, largest loss first within each tier. Do NOT include a WoW Change / percentage column anywhere in this subsection -- these accounts have no percentage data provided and none should be shown or calculated.
+#### Tier 1 — 1,500+ GAL Lost
+Table: Account | Region | Rep | Area Manager | This Week | Prior Week | Vol Change
+#### Tier 2 — 500-1,499 GAL Lost
+Same table format.
+#### Tier 3 — 100-499 GAL Lost
+Same table format.
+"""
+    elif has_inside:
+        section_4_scope = "This upload contains ONLY Inside Sales regions. Do NOT create a 'Regular Regions' subsection or heading at all -- go straight to the tiered GAL format below as the only content in this section, with no 'Inside Sales Regions' sub-heading needed either since it's the only content."
+        regular_block = ""
+        inside_block = """These are smaller-fleet regions where percentage swings are misleading -- a single truck can look like a 60% drop. Grouped by gallons lost instead, largest loss first within each tier. Do NOT include a WoW Change / percentage column anywhere -- these accounts have no percentage data provided and none should be shown or calculated.
+#### Tier 1 — 1,500+ GAL Lost
+Table: Account | Region | Rep | Area Manager | This Week | Prior Week | Vol Change
+#### Tier 2 — 500-1,499 GAL Lost
+Same table format.
+#### Tier 3 — 100-499 GAL Lost
+Same table format.
+"""
+    else:
+        section_4_scope = "This upload contains ONLY regular regions. Do NOT create an 'Inside Sales Regions' subsection or heading at all."
+        regular_block = """Group by bucket: 20-30%, then 10-20%, then 0-10%.
+#### 20-30% Decrease
+Table: Account | Region | Rep | Area Manager | This Week | Prior Week | WoW Change | Vol Change
+#### 10-20% Decrease
+Same table format.
+#### 0-10% Decrease
+Same table format.
+"""
+        inside_block = ""
+
+    prompt += f"""
 
 ---
 INSTRUCTIONS:
@@ -334,27 +387,9 @@ The This Week column should show 0 GAL for every row. State it plainly.
 After table: 2-3 bullets noting patterns in regions or reps with multiple dark accounts.
 
 ## 4. FUEL DECREASE ALERTS
-This section has two parts, covering different account types. If either part has no flagged accounts, write "No alerts this period" under it.
-
-### Regular Regions
-Group by bucket: 20-30%, then 10-20%, then 0-10%.
-#### 20-30% Decrease
-Table: Account | Region | Rep | Area Manager | This Week | Prior Week | WoW Change | Vol Change
-#### 10-20% Decrease
-Same table format.
-#### 0-10% Decrease
-Same table format.
-
-### Inside Sales Regions
-These are smaller-fleet regions where percentage swings are misleading -- a single truck can look like a 60% drop. Grouped by gallons lost instead, largest loss first within each tier. Do NOT include a WoW Change / percentage column anywhere in this subsection -- these accounts have no percentage data provided and none should be shown or calculated.
-#### Tier 1 — 1,500+ GAL Lost
-Table: Account | Region | Rep | Area Manager | This Week | Prior Week | Vol Change
-#### Tier 2 — 500-1,499 GAL Lost
-Same table format.
-#### Tier 3 — 100-499 GAL Lost
-Same table format.
-
-After both parts: 2-3 bullets noting rep or region concentration.
+{section_4_scope}
+{regular_block}{inside_block}
+After all included subsections above: 2-3 bullets noting rep or region concentration.
 
 ## 5. FUEL INCREASES
 Table: Account | Region | Rep | This Week | Prior Week | WoW Change | Vol Gained
@@ -377,7 +412,7 @@ DATA CONTEXT:
 - Regular-region decrease buckets: 0-10%, 10-20%, 20-30%. Inside Sales region decreases are NOT percentage-bucketed -- they are tiered by absolute GAL lost (Tier 1: >=1,500 GAL, Tier 2: 500-1,499 GAL, Tier 3: 100-499 GAL) and sorted largest loss to smallest, with anything under 100 GAL excluded entirely, and no percentage shown. In both cases, accounts moving more than 30% in either direction are intentionally excluded -- those are covered by a separate fleet exception report.
 - In the REGIONAL SUMMARY data, the row marked "FLEET-WIDE TOTAL" is the correct total fleet volume figure -- quote it directly, do not sum other rows yourself.
 - If a field shows N/A, omit it rather than displaying N/A
-- If no accounts cross a threshold in a section, write "No alerts this period"
+- If no accounts cross a threshold in a section that IS included, write "No alerts this period" under that specific subsection heading -- but never create a subsection heading for a region type that is entirely absent from this upload.
 - Never fabricate data. Only report what is in the provided data.
 """
     return prompt
