@@ -604,7 +604,7 @@ else:
         <div class="stat-row">
             <div class="stat-card good"><div class="stat-value">{s['best_region_name']}</div><div class="stat-label">Best Region WoW ({best_wow})</div></div>
             <div class="stat-card danger"><div class="stat-value">{s['worst_region_name']}</div><div class="stat-label">Worst Region WoW ({worst_wow})</div></div>
-            <div class="stat-card"><div class="stat-value">{nat_vol}</div><div class="stat-label">National Fuel Volume</div></div>
+            <div class="stat-card"><div class="stat-value">{nat_vol}</div><div class="stat-label">Total Fleet Volume</div></div>
             <div class="stat-card"><div class="stat-value">{s['region_count']}</div><div class="stat-label">Regions Tracked</div></div>
             <div class="stat-card danger"><div class="stat-value">{s['newly_dark_count']}</div><div class="stat-label">Newly Dark Accounts</div></div>
         </div>
