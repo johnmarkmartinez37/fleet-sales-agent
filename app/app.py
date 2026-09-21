@@ -373,7 +373,7 @@ Table: Account | Region | Rep | This Week | Prior Week | Vol Gained
 Do NOT include a WoW Change / percentage column -- sorted by absolute volume gained only.
 """
     elif has_inside:
-        section_5_scope = "This upload contains ONLY Inside Sales regions. Do NOT include a WoW Change / percentage column anywhere in this section."
+        section_5_scope = "This upload contains ONLY Inside Sales regions. CRITICAL: even though This Week and Prior Week numbers are both given below (letting you calculate a percentage yourself), you must NOT calculate, derive, mention, imply, or display a percentage anywhere near any account in this section -- no % symbol at all, no WoW Change column, nothing. The ability to compute one does not mean you should."
         increases_regular_block = ""
         increases_inside_block = """Table: Account | Region | Rep | This Week | Prior Week | Vol Gained
 Sorted by absolute volume gained only, no percentage column.
@@ -416,7 +416,7 @@ OUTPUT FORMAT -- follow this exact order:
 ## 2. REGIONAL HIGHLIGHTS
 ### Top 3 Performing Regions
 Table with columns: Rank | Region | Rep | Current Volume | WoW Change | vs. 13Wk Avg
-Each row must be a DISTINCT region -- never list the same region number in more than one rank row, even if that region has multiple standout individual accounts. Rank using the REGIONAL SUMMARY data (region-level totals) when it is available. If REGIONAL SUMMARY data is empty or not provided, do NOT build this table from individual account-level data -- instead, skip the table entirely and write 1-2 sentences naming which region shows the strongest account-level signal, making clear that region-level totals were not available this period.
+Each row must be a DISTINCT region -- never list the same region number in more than one rank row. Rank using the REGIONAL SUMMARY data (region-level totals) when it is available. If REGIONAL SUMMARY data is empty or not provided, this table must not be created at all -- do not output a table with any dashes, blanks, or "—" placeholders in the Current Volume or vs. 13Wk Avg columns under any circumstances. Instead write 1-2 sentences naming which region shows the strongest account-level signal, making clear region-level totals were not available. A table with missing columns is worse than no table -- never produce one.
 After table (if built): 2-3 bullets with context on what's driving each region's performance.
 
 ### Bottom 3 Underperforming Regions
