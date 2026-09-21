@@ -248,14 +248,14 @@ def build_claude_prompt(results):
         inside_tiered.append(a_copy)
     inside_tiered.sort(key=lambda x: x["vol_change"])
 
-    lines.append(f"\nFUEL DECREASE ALERTS — INSIDE SALES REGIONS (tiered by GAL lost, not percentage; sorted largest loss first; under 100 GAL excluded): {len(inside_tiered)} flagged")
+        lines.append(f"\nFUEL DECREASE ALERTS — INSIDE SALES REGIONS (tiered by GAL lost, not percentage; sorted largest loss first; under 100 GAL excluded; percentage intentionally omitted -- do not calculate or mention WoW% for these accounts): {len(inside_tiered)} flagged")
     for a in inside_tiered[:100]:
         lines.append(
             f"  [{a['gal_tier']}] {a['customer']} | Region: {a['region']} | "
             f"Rep: {a['salesperson'] or 'N/A'} | Mgr: {a['area_manager'] or 'N/A'} | "
             f"This week: {fmt_num(a['current_week'], 'GAL')} | "
             f"Prior: {fmt_num(a['prior_week'], 'GAL')} | "
-            f"Change: {fmt_pct(a['wow_pct'])} ({fmt_num(a['vol_change'], 'GAL')} vol)"
+            f"Vol Change: {fmt_num(a['vol_change'], 'GAL')}"
         )
 
     lines.append(f"\nNEWLY DARK ACCOUNTS (13wk avg >= 1,000 GAL, zero this period): {len(results['fuel_newly_dark'])} accounts")
