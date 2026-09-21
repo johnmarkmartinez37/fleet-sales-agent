@@ -12,7 +12,7 @@ except Exception:
     icon = "🚛"
 
 st.set_page_config(
-    page_title="Fleet Sales Intelligence — Love's",
+    page_title="Fleet Sales Intelligence Testing Changes Hello 999",
     page_icon=icon,
     layout="wide",
     initial_sidebar_state="collapsed",
