@@ -1,33 +1,32 @@
-
 import streamlit as st
 import tempfile
 import os
 import anthropic
 import httpx2
 from PIL import Image
- 
+
 # ── Page config ────────────────────────────────────────────────────────────────
 try:
     icon = Image.open("loveslogo.webp")
 except Exception:
     icon = "🚛"
- 
+
 st.set_page_config(
     page_title="Fleet Sales Intelligence — Love's",
     page_icon=icon,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
- 
+
 # ── Styling ─────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
- 
+
 html, body, [class*="css"] { font-family: 'Montserrat', sans-serif; }
 #MainMenu, footer, header { visibility: hidden; }
 .block-container { padding-top: 0 !important; max-width: 1200px; }
- 
+
 .loves-header {
     background: white;
     border-bottom: 3px solid #d90d0d;
@@ -157,12 +156,12 @@ html, body, [class*="css"] { font-family: 'Montserrat', sans-serif; }
 .results-title span { color: #d90d0d; }
 </style>
 """, unsafe_allow_html=True)
- 
+
 # ── Imports from existing modules ───────────────────────────────────────────────
 from analyzer import analyze_reports
 from monthly_analyzer import analyze_monthly_report
-from config import METRIC_UNITS, MAX_TOKENS
- 
+from config import METRIC_UNITS, MAX_TOKENS, INSIDE_SALES_REGIONS
+
 # ── API Key ─────────────────────────────────────────────────────────────────────
 def get_api_key():
     try:
@@ -170,21 +169,21 @@ def get_api_key():
     except Exception:
         from config import ANTHROPIC_API_KEY
         return ANTHROPIC_API_KEY
- 
+
 # ── Formatting helpers ──────────────────────────────────────────────────────────
 def fmt_pct(val):
     if val is None:
         return "N/A"
     sign = "+" if val > 0 else ""
     return f"{sign}{val:.1f}%"
- 
+
 def fmt_num(val, unit=""):
     if val is None:
         return "N/A"
     if unit == "$":
         return f"${val:,.2f}"
     return f"{val:,.0f}{' ' + unit if unit else ''}"
- 
+
 # ── Prompt builders ─────────────────────────────────────────────────────────────
 def build_claude_prompt(results):
     date = results.get("report_date", "Unknown")
@@ -193,15 +192,17 @@ def build_claude_prompt(results):
     lines.append("=" * 60)
     lines.append("\nREGIONAL SUMMARY (from Region report):")
     for r in results["region_summary"][:20]:
+        tag = " ← FLEET-WIDE TOTAL. Use this figure directly for any total-fleet-volume statement. Do not add up National/East/West/Inside East/Inside West/Aggregators or any other rows to recompute this yourself." if r["label"] == "Fleet Hierarchy" else ""
         lines.append(
             f"  {r['label']} | Rep: {r['salesperson'] or 'N/A'} | "
             f"Current: {fmt_num(r['current_week'], 'GAL')} | "
             f"13Wk Avg: {fmt_num(r['avg_13wk'], 'GAL')} | "
             f"vs Avg: {fmt_pct(r['curr_ov_avg'])} | "
-            f"WoW: {fmt_pct(r['wow_pct'])}"
+            f"WoW: {fmt_pct(r['wow_pct'])}{tag}"
         )
-    lines.append(f"\nFUEL DECREASE ALERTS — MAIN ACCOUNTS (>=10,000 GAL avg, >=5,000 GAL current): {len(results['fuel_main_alerts'])} flagged")
-    for a in results["fuel_main_alerts"][:75]:
+    main_alerts_filtered = [a for a in results["fuel_main_alerts"] if not (a["bucket"] == "0-10% Decrease" and a["region"] in INSIDE_SALES_REGIONS)]
+    lines.append(f"\nFUEL DECREASE ALERTS — MAIN ACCOUNTS (>=10,000 GAL avg, >=5,000 GAL current): {len(main_alerts_filtered)} flagged")
+    for a in main_alerts_filtered[:75]:
         lines.append(
             f"  [{a['bucket']}] {a['customer']} | Region: {a['region']} | "
             f"Rep: {a['salesperson'] or 'N/A'} | Mgr: {a['area_manager'] or 'N/A'} | "
@@ -209,8 +210,9 @@ def build_claude_prompt(results):
             f"Prior: {fmt_num(a['prior_week'], 'GAL')} | "
             f"Change: {fmt_pct(a['wow_pct'])} ({fmt_num(a['vol_change'], 'GAL')} vol)"
         )
-    lines.append(f"\nFUEL DECREASE ALERTS — SECONDARY ACCOUNTS (<10,000 GAL avg): {len(results['fuel_secondary'])} flagged")
-    for a in results["fuel_secondary"][:100]:
+    secondary_filtered = [a for a in results["fuel_secondary"] if not (a["bucket"] == "0-10% Decrease" and a["region"] in INSIDE_SALES_REGIONS)]
+    lines.append(f"\nFUEL DECREASE ALERTS — SECONDARY ACCOUNTS (<10,000 GAL avg): {len(secondary_filtered)} flagged")
+    for a in secondary_filtered[:100]:
         lines.append(
             f"  [{a['bucket']}] {a['customer']} | Region: {a['region']} | "
             f"Rep: {a['salesperson'] or 'N/A'} | Mgr: {a['area_manager'] or 'N/A'} | "
@@ -321,13 +323,14 @@ DATA CONTEXT:
 - Main accounts: 13-week average >= 10,000 GAL and current week >= 5,000 GAL
 - Secondary accounts: below those thresholds
 - Newly dark: accounts with 13-week avg >= 1,000 GAL reporting zero this period
-- Decrease buckets: 0-10%, 10-20%, 20-30%. Accounts above 30% include in 20-30% bucket with a note.
+- Decrease buckets: 0-10%, 10-20%, 20-30%. Accounts moving more than 30% in either direction are intentionally excluded -- those are covered by a separate fleet exception report.
+- In the REGIONAL SUMMARY data, the row marked "FLEET-WIDE TOTAL" is the correct total fleet volume figure -- quote it directly, do not sum other rows yourself.
 - If a field shows N/A, omit it rather than displaying N/A
 - If no accounts cross a threshold in a section, write "No alerts this period"
 - Never fabricate data. Only report what is in the provided data.
 """
     return prompt
- 
+
 def build_monthly_prompt(results):
     period = results.get("period", "Unknown")
     window = results.get("trend_window", 4)
@@ -367,11 +370,11 @@ def build_monthly_prompt(results):
             lines.append(f"  {e}")
     prompt = "\n".join(lines)
     prompt += f"""
- 
+
 ---
 INSTRUCTIONS:
 You are the Fleet Sales Intelligence Agent for Love's Travel Stops fleet sales team. Using the structured monthly data above, generate a professional executive insight summary for SVP-level leadership. This is a MONTHLY report for {period} -- use monthly language throughout, never weekly.
- 
+
 TONE AND STYLE:
 - Write as a senior analyst. Direct, confident, factual.
 - Never tell leadership what to do or how to respond.
@@ -379,41 +382,41 @@ TONE AND STYLE:
 - State declines plainly: "down 9.1% year-over-year"
 - Numbers must always include units (GAL, $, EA, Hrs)
 - Minimize bold formatting. Use bold only for section headers.
- 
+
 OUTPUT FORMAT:
- 
+
 ## MONTHLY FLEET SALES BRIEF
 **Period: {period}**
- 
+
 ## 1. OPENING
 2-3 bullets. Total fleet hierarchy volume and YOY direction. Overall profit picture. Clearest field group headline.
- 
+
 ## 2. REGIONAL PERFORMANCE
 ### Top 3 Regions by Year-over-Year Growth
 Table: Rank | Region | Rep | DSL Volume | YOY | Profit | PPG
 After table: 2-3 bullets with context.
- 
+
 ### Bottom 3 Regions by Year-over-Year Change
 Same table format. After table: 2-3 bullets.
- 
+
 ## 3. AREA MANAGER PERFORMANCE
 Table: Rank | Area Manager | Group | DSL Volume | YOY
 After table: 2-3 bullets covering top managers and notable YOY movement.
- 
+
 ## 4. MULTI-MONTH TREND
 Table: Account | Region | 4 Months Ago | Most Recent Month | Decline % | Volume Lost
 This reflects only the recent {window}-month window ({month_str}).
 After table: 2-3 bullets on largest declines and region concentration.
- 
+
 ## 5. PROFIT & MARGIN
 2-3 bullets. Highest and lowest profit regions, PPG spread. Factual only.
- 
+
 ## 6. KEY TAKEAWAYS
 3 bullets. Each names a specific region/account/manager, states a number, surfaces an observation.
- 
+
 ## 7. CLOSING
 One sentence. Factual only.
- 
+
 DATA CONTEXT:
 - This is monthly data. YOY is reliable -- use it confidently.
 - Multi-month trend reflects ONLY the recent {window}-month window, only accounts that declined every month starting at or above 25,000 GAL.
@@ -421,8 +424,8 @@ DATA CONTEXT:
 - Never fabricate data.
 """
     return prompt
- 
- 
+
+
 # ── Header ──────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="loves-header">
@@ -433,7 +436,7 @@ st.markdown("""
     ● Fleet Sales Analysis Portal &nbsp;&nbsp; ● Internal Use Only &nbsp;&nbsp; ● AI Powered
 </div>
 """, unsafe_allow_html=True)
- 
+
 # ── Session state ───────────────────────────────────────────────────────────────
 if "results" not in st.session_state:
     st.session_state.results = None
@@ -445,15 +448,15 @@ if "summary" not in st.session_state:
     st.session_state.summary = None
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
- 
+
 # ── Upload UI ───────────────────────────────────────────────────────────────────
 if st.session_state.analysis is None:
     st.markdown('<div class="eyebrow">Analysis Portal</div>', unsafe_allow_html=True)
     st.markdown("## Fleet Intelligence for Love's Sales Team")
     st.markdown("Choose an analysis type, upload your report, and get an executive-ready insight summary in seconds.")
- 
+
     tab_weekly, tab_monthly = st.tabs(["Weekly Analysis", "Monthly Analysis"])
- 
+
     with tab_weekly:
         st.markdown("#### Upload Reports")
         col1, col2 = st.columns(2)
@@ -461,7 +464,7 @@ if st.session_state.analysis is None:
             customer_file = st.file_uploader("Customer Report", type=["xlsx", "xls"], key="customer_upload", help="13 Week Trend Report by Customer")
         with col2:
             region_file = st.file_uploader("Region Report", type=["xlsx", "xls"], key="region_upload", help="13 Week Trend Report by Region")
- 
+
         ready = customer_file is not None or region_file is not None
         if st.button("ANALYZE REPORTS", disabled=not ready, key="btn_weekly"):
             customer_path = None
@@ -475,7 +478,7 @@ if st.session_state.analysis is None:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as rf:
                         rf.write(region_file.read())
                         region_path = rf.name
- 
+
                 with st.spinner("Analyzing your report... this takes about 60 seconds."):
                     results = analyze_reports(customer_path, region_path)
                     prompt = build_claude_prompt(results)
@@ -489,7 +492,7 @@ if st.session_state.analysis is None:
                         messages=[{"role": "user", "content": prompt}]
                     )
                     claude_output = message.content[0].text
- 
+
                 valid_regions = [r for r in results["region_summary"] if r["wow_pct"] is not None and r["current_week"] is not None and r["label"] and r["label"].startswith("Sales Region") and (r["current_week"] or 0) >= 1000000]
                 regions_sorted = sorted(valid_regions, key=lambda x: x["wow_pct"], reverse=True)
                 best_region = regions_sorted[0] if regions_sorted else None
@@ -498,7 +501,7 @@ if st.session_state.analysis is None:
                 national_volume = fleet_total["current_week"] if fleet_total and fleet_total["current_week"] else 0
                 national_prior = fleet_total["prior_week"] if fleet_total and fleet_total["prior_week"] else 0
                 national_wow = ((national_volume - national_prior) / national_prior * 100) if national_prior else 0
- 
+
                 st.session_state.results = results
                 st.session_state.analysis = claude_output
                 st.session_state.mode = "weekly"
@@ -515,7 +518,7 @@ if st.session_state.analysis is None:
                 }
                 st.session_state.chat_history = []
                 st.rerun()
- 
+
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
             finally:
@@ -525,11 +528,11 @@ if st.session_state.analysis is None:
                             os.unlink(p)
                         except Exception:
                             pass
- 
+
     with tab_monthly:
         st.markdown("#### Upload Report")
         monthly_file = st.file_uploader("Monthly Sales Report", type=["xlsx", "xls"], key="monthly_upload", help="Full monthly report with rollups and 13-month history")
- 
+
         ready_m = monthly_file is not None
         if st.button("ANALYZE REPORT", disabled=not ready_m, key="btn_monthly"):
             monthly_path = None
@@ -537,7 +540,7 @@ if st.session_state.analysis is None:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as mf:
                     mf.write(monthly_file.read())
                     monthly_path = mf.name
- 
+
                 with st.spinner("Analyzing your report... this takes about 60 seconds."):
                     results = analyze_monthly_report(monthly_path)
                     prompt = build_monthly_prompt(results)
@@ -551,7 +554,7 @@ if st.session_state.analysis is None:
                         messages=[{"role": "user", "content": prompt}]
                     )
                     claude_output = message.content[0].text
- 
+
                 st.session_state.results = results
                 st.session_state.analysis = claude_output
                 st.session_state.mode = "monthly"
@@ -564,7 +567,7 @@ if st.session_state.analysis is None:
                 }
                 st.session_state.chat_history = []
                 st.rerun()
- 
+
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
             finally:
@@ -573,14 +576,14 @@ if st.session_state.analysis is None:
                         os.unlink(monthly_path)
                     except Exception:
                         pass
- 
+
 # ── Results UI ──────────────────────────────────────────────────────────────────
 else:
     s = st.session_state.summary
     results = st.session_state.results
     analysis = st.session_state.analysis
     mode = st.session_state.mode
- 
+
     col_title, col_btn = st.columns([4, 1])
     with col_title:
         period_label = s.get("report_date") or s.get("period") or ""
@@ -593,9 +596,9 @@ else:
             st.session_state.summary = None
             st.session_state.chat_history = []
             st.rerun()
- 
+
     st.markdown("<hr style='border:none;border-top:3px solid #d90d0d;margin:8px 0 20px 0;'>", unsafe_allow_html=True)
- 
+
     if mode == "weekly":
         best_wow = f"+{s['best_region_wow']:.1f}%" if s['best_region_wow'] > 0 else f"{s['best_region_wow']:.1f}%"
         worst_wow = f"+{s['worst_region_wow']:.1f}%" if s['worst_region_wow'] > 0 else f"{s['worst_region_wow']:.1f}%"
@@ -617,11 +620,11 @@ else:
             <div class="stat-card danger"><div class="stat-value">{s['declining_count']}</div><div class="stat-label">Declining Accounts ({s['trend_window']}-Mo Window)</div></div>
         </div>
         """, unsafe_allow_html=True)
- 
+
     st.markdown('<div class="analysis-card"><div class="card-label">Executive Insight Summary</div>', unsafe_allow_html=True)
     st.markdown(analysis)
     st.markdown('</div>', unsafe_allow_html=True)
- 
+
     period_label = s.get("report_date") or s.get("period") or "report"
     st.download_button(
         label="Download Analysis as Text",
@@ -629,9 +632,9 @@ else:
         file_name=f"fleet_analysis_{period_label}.txt",
         mime="text/plain"
     )
- 
+
     import pandas as pd
- 
+
     if mode == "weekly" and results.get("fuel_main_alerts"):
         st.markdown('<div class="analysis-card"><div class="card-label">Top Fuel Decrease Alerts — Main Accounts</div>', unsafe_allow_html=True)
         alert_data = []
@@ -649,7 +652,7 @@ else:
             })
         st.dataframe(pd.DataFrame(alert_data), use_container_width=True, hide_index=True)
         st.markdown('</div>', unsafe_allow_html=True)
- 
+
     if mode == "monthly" and results.get("trend_declining"):
         st.markdown('<div class="analysis-card"><div class="card-label">Declining Accounts — Recent Multi-Month Window</div>', unsafe_allow_html=True)
         trend_data = []
@@ -664,14 +667,14 @@ else:
             })
         st.dataframe(pd.DataFrame(trend_data), use_container_width=True, hide_index=True)
         st.markdown('</div>', unsafe_allow_html=True)
- 
+
     # ── Follow-up chat ──────────────────────────────────────────────────────────
     st.markdown('<div class="analysis-card"><div class="card-label">Ask a Follow-Up Question</div>', unsafe_allow_html=True)
- 
+
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
- 
+
     if question := st.chat_input("Ask about the data — e.g. which rep has the most newly dark accounts?"):
         st.session_state.chat_history.append({"role": "user", "content": question})
         with st.chat_message("user"):
@@ -689,13 +692,13 @@ else:
                         messages=[{
                             "role": "user",
                             "content": f"""You are the Fleet Sales Intelligence Agent for Love's Travel Stops. A user has already run an analysis and is asking a follow-up question.
- 
+
 ANALYSIS CONTEXT:
 {analysis}
- 
+
 USER QUESTION:
 {question}
- 
+
 Answer concisely and factually based only on the data provided. Use specific numbers. Do not fabricate data."""
                         }]
                     )
@@ -704,6 +707,4 @@ Answer concisely and factually based only on the data provided. Use specific num
                     st.session_state.chat_history.append({"role": "assistant", "content": answer})
                 except Exception as e:
                     st.error(f"Error: {str(e)}")
- 
     st.markdown('</div>', unsafe_allow_html=True)
- 
