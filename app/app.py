@@ -403,6 +403,7 @@ TONE AND STYLE:
 - Reference area manager alongside salesperson when available
 - Keep sections tight -- no extra blank lines between sections, no padding
 - Minimize bold formatting. Use bold only for section headers, never for account names, rep names, metrics, or numbers in the text.
+- Never use backticks, code formatting, or monospace markup for numbers, dollar amounts, or any other text -- write all values as plain text (e.g. $1,750.00), never wrapped in backticks.
 
 OUTPUT FORMAT -- follow this exact order:
 
@@ -415,11 +416,12 @@ OUTPUT FORMAT -- follow this exact order:
 ## 2. REGIONAL HIGHLIGHTS
 ### Top 3 Performing Regions
 Table with columns: Rank | Region | Rep | Current Volume | WoW Change | vs. 13Wk Avg
-After table: 2-3 bullets with context on what's driving each region's performance.
+Each row must be a DISTINCT region -- never list the same region number in more than one rank row, even if that region has multiple standout individual accounts. Rank using the REGIONAL SUMMARY data (region-level totals) when it is available. If REGIONAL SUMMARY data is empty or not provided, do NOT build this table from individual account-level data -- instead, skip the table entirely and write 1-2 sentences naming which region shows the strongest account-level signal, making clear that region-level totals were not available this period.
+After table (if built): 2-3 bullets with context on what's driving each region's performance.
 
 ### Bottom 3 Underperforming Regions
-Same table format.
-After table: 2-3 bullets with context on which accounts are driving underperformance in each region.
+Same rules apply: distinct regions only, same fallback behavior if REGIONAL SUMMARY data is unavailable.
+After table (if built): 2-3 bullets with context on which accounts are driving underperformance in each region.
 
 ## 3. NEWLY DARK ACCOUNTS
 Table with columns: Account | Region | Rep | Area Manager | 13Wk Avg | This Week | Last Known Volume
@@ -458,4 +460,380 @@ DATA CONTEXT:
 """
     return prompt
 
-def
+def build_monthly_prompt(results):
+    period = results.get("period", "Unknown")
+    window = results.get("trend_window", 4)
+    months = results.get("trend_months", [])
+    month_str = ", ".join([m for m in months if m]) if months else "recent months"
+    lines = []
+    lines.append(f"MONTHLY FLEET SALES REPORT — Period {period}")
+    lines.append("=" * 60)
+    lines.append("\nREGIONAL ROLLUP (DSL gallons, YOY, profit, price per gallon):")
+    for r in results["regional"][:40]:
+        lines.append(
+            f"  {r['label']} | Rep: {r['rep'] or 'N/A'} | "
+            f"DSL: {fmt_num(r['dsl'], 'GAL')} | "
+            f"YOY: {fmt_pct(r['yoy_pct'])} | "
+            f"Profit: {fmt_num(r['profit'], '$')} | "
+            f"PPG: {fmt_num(r['ppg'], '$')} | "
+            f"Tires: {fmt_num(r['tires'], 'EA')} | PM: {fmt_num(r['pm'], 'EA')} | "
+            f"Labor: {fmt_num(r['labor'], 'Hrs')}"
+        )
+    lines.append("\nAREA MANAGER PERFORMANCE (ranked by DSL volume):")
+    for m in results["area_managers"][:25]:
+        lines.append(
+            f"  {m['manager']} | Group: {m['group'] or 'N/A'} | "
+            f"DSL: {fmt_num(m['dsl'], 'GAL')} | YOY: {fmt_pct(m['yoy_pct'])}"
+        )
+    lines.append(f"\nMULTI-MONTH TREND — consecutive monthly decline across the recent {window}-month window ({month_str}): {len(results['trend_declining'])} accounts")
+    for t in results["trend_declining"][:30]:
+        lines.append(
+            f"  {t['customer']} | Region: {t['region']} | "
+            f"4 Months Ago: {fmt_num(t['window_start'], 'GAL')} | "
+            f"Most recent month: {fmt_num(t['recent_month'], 'GAL')} | "
+            f"Decline: {fmt_pct(t['drop_pct'])} ({fmt_num(t['drop_vol'], 'GAL')})"
+        )
+    if results["errors"]:
+        lines.append("\nERRORS DURING PROCESSING:")
+        for e in results["errors"]:
+            lines.append(f"  {e}")
+    prompt = "\n".join(lines)
+    prompt += f"""
+
+---
+INSTRUCTIONS:
+You are the Fleet Sales Intelligence Agent for Love's Travel Stops fleet sales team. Using the structured monthly data above, generate a professional executive insight summary for SVP-level leadership. This is a MONTHLY report for {period} -- use monthly language throughout, never weekly.
+
+TONE AND STYLE:
+- Write as a senior analyst. Direct, confident, factual.
+- Never tell leadership what to do or how to respond.
+- Never write: "it is worth noting", "as we can see", "it appears that", "please note", "requires immediate action"
+- State declines plainly: "down 9.1% year-over-year"
+- Numbers must always include units (GAL, $, EA, Hrs)
+- Minimize bold formatting. Use bold only for section headers.
+
+OUTPUT FORMAT:
+
+## MONTHLY FLEET SALES BRIEF
+**Period: {period}**
+
+## 1. OPENING
+2-3 bullets. Total fleet hierarchy volume and YOY direction. Overall profit picture. Clearest field group headline.
+
+## 2. REGIONAL PERFORMANCE
+### Top 3 Regions by Year-over-Year Growth
+Table: Rank | Region | Rep | DSL Volume | YOY | Profit | PPG
+After table: 2-3 bullets with context.
+
+### Bottom 3 Regions by Year-over-Year Change
+Same table format. After table: 2-3 bullets.
+
+## 3. AREA MANAGER PERFORMANCE
+Table: Rank | Area Manager | Group | DSL Volume | YOY
+After table: 2-3 bullets covering top managers and notable YOY movement.
+
+## 4. MULTI-MONTH TREND
+Table: Account | Region | 4 Months Ago | Most Recent Month | Decline % | Volume Lost
+This reflects only the recent {window}-month window ({month_str}).
+After table: 2-3 bullets on largest declines and region concentration.
+
+## 5. PROFIT & MARGIN
+2-3 bullets. Highest and lowest profit regions, PPG spread. Factual only.
+
+## 6. KEY TAKEAWAYS
+3 bullets. Each names a specific region/account/manager, states a number, surfaces an observation.
+
+## 7. CLOSING
+One sentence. Factual only.
+
+DATA CONTEXT:
+- This is monthly data. YOY is reliable -- use it confidently.
+- Multi-month trend reflects ONLY the recent {window}-month window, only accounts that declined every month starting at or above 25,000 GAL.
+- PPG is price/profit per gallon in dollars.
+- Never fabricate data.
+"""
+    return prompt
+
+
+# ── Header ──────────────────────────────────────────────────────────────────────
+st.markdown("""
+<div class="loves-header">
+    <div class="loves-header-title">Fleet Sales <span>Intelligence</span></div>
+    <div class="loves-header-badge">Powered by Claude Opus</div>
+</div>
+<div class="loves-banner">
+    ● Fleet Sales Analysis Portal &nbsp;&nbsp; ● Internal Use Only &nbsp;&nbsp; ● AI Powered
+</div>
+""", unsafe_allow_html=True)
+
+# ── Session state ───────────────────────────────────────────────────────────────
+if "results" not in st.session_state:
+    st.session_state.results = None
+if "analysis" not in st.session_state:
+    st.session_state.analysis = None
+if "mode" not in st.session_state:
+    st.session_state.mode = None
+if "summary" not in st.session_state:
+    st.session_state.summary = None
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+# ── Upload UI ───────────────────────────────────────────────────────────────────
+if st.session_state.analysis is None:
+    st.markdown('<div class="eyebrow">Analysis Portal</div>', unsafe_allow_html=True)
+    st.markdown("## Fleet Intelligence for Love's Sales Team")
+    st.markdown("Choose an analysis type, upload your report, and get an executive-ready insight summary in seconds.")
+
+    tab_weekly, tab_monthly = st.tabs(["Weekly Analysis", "Monthly Analysis"])
+
+    with tab_weekly:
+        st.markdown("#### Upload Reports")
+        col1, col2 = st.columns(2)
+        with col1:
+            customer_file = st.file_uploader("Customer Report", type=["xlsx", "xls"], key="customer_upload", help="13 Week Trend Report by Customer")
+        with col2:
+            region_file = st.file_uploader("Region Report", type=["xlsx", "xls"], key="region_upload", help="13 Week Trend Report by Region")
+
+        ready = customer_file is not None or region_file is not None
+        if st.button("ANALYZE REPORTS", disabled=not ready, key="btn_weekly"):
+            customer_path = None
+            region_path = None
+            try:
+                if customer_file:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as cf:
+                        cf.write(customer_file.read())
+                        customer_path = cf.name
+                if region_file:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as rf:
+                        rf.write(region_file.read())
+                        region_path = rf.name
+
+                with st.spinner("Analyzing your report... this takes about 60 seconds."):
+                    results = analyze_reports(customer_path, region_path)
+                    prompt = build_claude_prompt(results)
+                    client = anthropic.Anthropic(
+                        api_key=get_api_key(),
+                        http_client=httpx2.Client(verify=False)
+                    )
+                    message = client.messages.create(
+                        model="claude-opus-4-6",
+                        max_tokens=MAX_TOKENS,
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    claude_output = message.content[0].text
+
+                valid_regions = [r for r in results["region_summary"] if r["wow_pct"] is not None and r["current_week"] is not None and r["label"] and r["label"].startswith("Sales Region") and (r["current_week"] or 0) >= 1000000]
+                regions_sorted = sorted(valid_regions, key=lambda x: x["wow_pct"], reverse=True)
+                best_region = regions_sorted[0] if regions_sorted else None
+                worst_region = regions_sorted[-1] if len(regions_sorted) > 1 else None
+                fleet_total = next((r for r in results["region_summary"] if r["label"] == "Fleet Hierarchy"), None)
+                national_volume = fleet_total["current_week"] if fleet_total and fleet_total["current_week"] else 0
+                national_prior = fleet_total["prior_week"] if fleet_total and fleet_total["prior_week"] else 0
+                national_wow = ((national_volume - national_prior) / national_prior * 100) if national_prior else 0
+
+                st.session_state.results = results
+                st.session_state.analysis = claude_output
+                st.session_state.mode = "weekly"
+                st.session_state.summary = {
+                    "report_date": results["report_date"],
+                    "best_region_name": best_region.get("label", "N/A") if best_region else "N/A",
+                    "best_region_wow": best_region.get("wow_pct", 0) if best_region else 0,
+                    "worst_region_name": worst_region.get("label", "N/A") if worst_region else "N/A",
+                    "worst_region_wow": worst_region.get("wow_pct", 0) if worst_region else 0,
+                    "national_volume": national_volume,
+                    "national_wow": national_wow,
+                    "region_count": len(results["region_summary"]),
+                    "newly_dark_count": len(results["fuel_newly_dark"]),
+                }
+                st.session_state.chat_history = []
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Analysis failed: {str(e)}")
+            finally:
+                for p in [customer_path, region_path]:
+                    if p:
+                        try:
+                            os.unlink(p)
+                        except Exception:
+                            pass
+
+    with tab_monthly:
+        st.markdown("#### Upload Report")
+        monthly_file = st.file_uploader("Monthly Sales Report", type=["xlsx", "xls"], key="monthly_upload", help="Full monthly report with rollups and 13-month history")
+
+        ready_m = monthly_file is not None
+        if st.button("ANALYZE REPORT", disabled=not ready_m, key="btn_monthly"):
+            monthly_path = None
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as mf:
+                    mf.write(monthly_file.read())
+                    monthly_path = mf.name
+
+                with st.spinner("Analyzing your report... this takes about 60 seconds."):
+                    results = analyze_monthly_report(monthly_path)
+                    prompt = build_monthly_prompt(results)
+                    client = anthropic.Anthropic(
+                        api_key=get_api_key(),
+                        http_client=httpx2.Client(verify=False)
+                    )
+                    message = client.messages.create(
+                        model="claude-opus-4-6",
+                        max_tokens=MAX_TOKENS,
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    claude_output = message.content[0].text
+
+                st.session_state.results = results
+                st.session_state.analysis = claude_output
+                st.session_state.mode = "monthly"
+                st.session_state.summary = {
+                    "period": results["period"],
+                    "region_count": len(results["regional"]),
+                    "manager_count": len(results["area_managers"]),
+                    "declining_count": len(results["trend_declining"]),
+                    "trend_window": results["trend_window"],
+                }
+                st.session_state.chat_history = []
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Analysis failed: {str(e)}")
+            finally:
+                if monthly_path:
+                    try:
+                        os.unlink(monthly_path)
+                    except Exception:
+                        pass
+
+# ── Results UI ──────────────────────────────────────────────────────────────────
+else:
+    s = st.session_state.summary
+    results = st.session_state.results
+    analysis = st.session_state.analysis
+    mode = st.session_state.mode
+
+    col_title, col_btn = st.columns([4, 1])
+    with col_title:
+        period_label = s.get("report_date") or s.get("period") or ""
+        st.markdown(f'<div class="results-title">Fleet Sales <span>Insights</span> &nbsp;<small style="font-size:13px;color:#666;font-family:\'DM Mono\',monospace;font-weight:400;">Period {period_label}</small></div>', unsafe_allow_html=True)
+    with col_btn:
+        if st.button("New Analysis"):
+            st.session_state.results = None
+            st.session_state.analysis = None
+            st.session_state.mode = None
+            st.session_state.summary = None
+            st.session_state.chat_history = []
+            st.rerun()
+
+    st.markdown("<hr style='border:none;border-top:3px solid #d90d0d;margin:8px 0 20px 0;'>", unsafe_allow_html=True)
+
+    if mode == "weekly":
+        best_wow = f"+{s['best_region_wow']:.1f}%" if s['best_region_wow'] > 0 else f"{s['best_region_wow']:.1f}%"
+        worst_wow = f"+{s['worst_region_wow']:.1f}%" if s['worst_region_wow'] > 0 else f"{s['worst_region_wow']:.1f}%"
+        nat_vol = f"{s['national_volume']/1e6:.1f}M GAL" if s['national_volume'] else "N/A"
+        st.markdown(f"""
+        <div class="stat-row">
+            <div class="stat-card good"><div class="stat-value">{s['best_region_name']}</div><div class="stat-label">Best Region WoW ({best_wow})</div></div>
+            <div class="stat-card danger"><div class="stat-value">{s['worst_region_name']}</div><div class="stat-label">Worst Region WoW ({worst_wow})</div></div>
+            <div class="stat-card"><div class="stat-value">{nat_vol}</div><div class="stat-label">Total Fleet Volume</div></div>
+            <div class="stat-card"><div class="stat-value">{s['region_count']}</div><div class="stat-label">Regions Tracked</div></div>
+            <div class="stat-card danger"><div class="stat-value">{s['newly_dark_count']}</div><div class="stat-label">Newly Dark Accounts</div></div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="stat-row">
+            <div class="stat-card"><div class="stat-value">{s['region_count']}</div><div class="stat-label">Regions</div></div>
+            <div class="stat-card"><div class="stat-value">{s['manager_count']}</div><div class="stat-label">Area Managers</div></div>
+            <div class="stat-card danger"><div class="stat-value">{s['declining_count']}</div><div class="stat-label">Declining Accounts ({s['trend_window']}-Mo Window)</div></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown('<div class="analysis-card"><div class="card-label">Executive Insight Summary</div>', unsafe_allow_html=True)
+    st.markdown(analysis.replace("$", "\\$"))
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    period_label = s.get("report_date") or s.get("period") or "report"
+    st.download_button(
+        label="Download Analysis as Text",
+        data=analysis,
+        file_name=f"fleet_analysis_{period_label}.txt",
+        mime="text/plain"
+    )
+
+    import pandas as pd
+
+    if mode == "weekly" and results.get("fuel_main_alerts"):
+        st.markdown('<div class="analysis-card"><div class="card-label">Top Fuel Decrease Alerts — Main Accounts</div>', unsafe_allow_html=True)
+        alert_data = []
+        for a in results["fuel_main_alerts"][:20]:
+            alert_data.append({
+                "Account": a["customer"],
+                "Region": a["region"] or "—",
+                "Rep": a["salesperson"] or "—",
+                "Area Manager": a["area_manager"] or "—",
+                "This Week": fmt_num(a["current_week"], "GAL"),
+                "Prior Week": fmt_num(a["prior_week"], "GAL"),
+                "WoW Change": fmt_pct(a["wow_pct"]),
+                "Vol Change": fmt_num(a["vol_change"], "GAL"),
+                "Bucket": a["bucket"] or "—",
+            })
+        st.dataframe(pd.DataFrame(alert_data), use_container_width=True, hide_index=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    if mode == "monthly" and results.get("trend_declining"):
+        st.markdown('<div class="analysis-card"><div class="card-label">Declining Accounts — Recent Multi-Month Window</div>', unsafe_allow_html=True)
+        trend_data = []
+        for t in results["trend_declining"][:30]:
+            trend_data.append({
+                "Account": t["customer"],
+                "Region": t["region"] or "—",
+                "4 Months Ago": fmt_num(t["window_start"], "GAL"),
+                "Most Recent Month": fmt_num(t["recent_month"], "GAL"),
+                "Decline %": fmt_pct(t["drop_pct"]),
+                "Volume Lost": fmt_num(t["drop_vol"], "GAL"),
+            })
+        st.dataframe(pd.DataFrame(trend_data), use_container_width=True, hide_index=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Follow-up chat ──────────────────────────────────────────────────────────
+    st.markdown('<div class="analysis-card"><div class="card-label">Ask a Follow-Up Question</div>', unsafe_allow_html=True)
+
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    if question := st.chat_input("Ask about the data — e.g. which rep has the most newly dark accounts?"):
+        st.session_state.chat_history.append({"role": "user", "content": question})
+        with st.chat_message("user"):
+            st.write(question)
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    client = anthropic.Anthropic(
+                        api_key=get_api_key(),
+                        http_client=httpx2.Client(verify=False)
+                    )
+                    message = client.messages.create(
+                        model="claude-opus-4-6",
+                        max_tokens=1024,
+                        messages=[{
+                            "role": "user",
+                            "content": f"""You are the Fleet Sales Intelligence Agent for Love's Travel Stops. A user has already run an analysis and is asking a follow-up question.
+
+ANALYSIS CONTEXT:
+{analysis}
+
+USER QUESTION:
+{question}
+
+Answer concisely and factually based only on the data provided. Use specific numbers. Do not fabricate data."""
+                        }]
+                    )
+                    answer = message.content[0].text
+                    st.write(answer)
+                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+    st.markdown('</div>', unsafe_allow_html=True)
