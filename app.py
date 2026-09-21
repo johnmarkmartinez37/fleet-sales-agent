@@ -200,7 +200,7 @@ def build_claude_prompt(results):
             f"vs Avg: {fmt_pct(r['curr_ov_avg'])} | "
             f"WoW: {fmt_pct(r['wow_pct'])}{tag}"
         )
-    main_alerts_filtered = [a for a in results["fuel_main_alerts"] if not (a["bucket"] == "0-10% Decrease" and a["region"] in INSIDE_SALES_REGIONS)]
+    main_alerts_filtered = [a for a in results["fuel_main_alerts"] if not (a["bucket"] == "0-10% Decrease" and str(a["region"]).split(".")[0] in INSIDE_SALES_REGIONS)]
     lines.append(f"\nFUEL DECREASE ALERTS — MAIN ACCOUNTS (>=10,000 GAL avg, >=5,000 GAL current): {len(main_alerts_filtered)} flagged")
     for a in main_alerts_filtered[:75]:
         lines.append(
@@ -210,7 +210,7 @@ def build_claude_prompt(results):
             f"Prior: {fmt_num(a['prior_week'], 'GAL')} | "
             f"Change: {fmt_pct(a['wow_pct'])} ({fmt_num(a['vol_change'], 'GAL')} vol)"
         )
-    secondary_filtered = [a for a in results["fuel_secondary"] if not (a["bucket"] == "0-10% Decrease" and a["region"] in INSIDE_SALES_REGIONS)]
+    secondary_filtered = [a for a in results["fuel_secondary"] if not (a["bucket"] == "0-10% Decrease" and str(a["region"]).split(".")[0] in INSIDE_SALES_REGIONS)]
     lines.append(f"\nFUEL DECREASE ALERTS — SECONDARY ACCOUNTS (<10,000 GAL avg): {len(secondary_filtered)} flagged")
     for a in secondary_filtered[:100]:
         lines.append(
