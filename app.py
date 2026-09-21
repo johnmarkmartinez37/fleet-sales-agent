@@ -494,10 +494,9 @@ if st.session_state.analysis is None:
                 regions_sorted = sorted(valid_regions, key=lambda x: x["wow_pct"], reverse=True)
                 best_region = regions_sorted[0] if regions_sorted else None
                 worst_region = regions_sorted[-1] if len(regions_sorted) > 1 else None
-                group_labels = {"National", "East", "West"}
-                group_regions = [r for r in results["region_summary"] if r["label"] in group_labels]
-                national_volume = sum(r["current_week"] for r in group_regions if r["current_week"])
-                national_prior = sum(r["prior_week"] for r in group_regions if r["prior_week"])
+                fleet_total = next((r for r in results["region_summary"] if r["label"] == "Fleet Hierarchy"), None)
+                national_volume = fleet_total["current_week"] if fleet_total and fleet_total["current_week"] else 0
+                national_prior = fleet_total["prior_week"] if fleet_total and fleet_total["prior_week"] else 0
                 national_wow = ((national_volume - national_prior) / national_prior * 100) if national_prior else 0
  
                 st.session_state.results = results
