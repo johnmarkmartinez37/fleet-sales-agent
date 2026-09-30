@@ -197,6 +197,41 @@ def gal_tier(vol_change):
         return "Tier 3 (100-499 GAL Lost)"
     return None
 
+def get_filterable_regions(results):
+    regions = set()
+    for a in results["fuel_main_alerts"] + results["fuel_secondary"] + results["fuel_increases"] + results["fuel_newly_dark"]:
+        if a.get("region"):
+            regions.add(a["region"])
+    for alerts in results["non_fuel_alerts"].values():
+        for a in alerts:
+            if a.get("region"):
+                regions.add(a["region"])
+
+    def region_sort_key(r):
+        try:
+            return (0, float(r))
+        except (TypeError, ValueError):
+            return (1, str(r))
+
+    return sorted(regions, key=region_sort_key)
+
+
+def filter_results_by_region(results, region):
+    return {
+        "report_date": results["report_date"],
+        "region_summary": [],
+        "fuel_main_alerts": [a for a in results["fuel_main_alerts"] if a.get("region") == region],
+        "fuel_secondary": [a for a in results["fuel_secondary"] if a.get("region") == region],
+        "fuel_newly_dark": [a for a in results["fuel_newly_dark"] if a.get("region") == region],
+        "fuel_increases": [a for a in results["fuel_increases"] if a.get("region") == region],
+        "non_fuel_alerts": {
+            metric: [a for a in alerts if a.get("region") == region]
+            for metric, alerts in results["non_fuel_alerts"].items()
+        },
+        "errors": [],
+    }
+
+
 # ── Prompt builders ─────────────────────────────────────────────────────────────
 def md_table(headers, rows):
     if not rows:
@@ -560,9 +595,15 @@ if "summary" not in st.session_state:
     st.session_state.summary = None
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+if "available_regions" not in st.session_state:
+    st.session_state.available_regions = ["Overall (All Regions)"]
+if "selected_view" not in st.session_state:
+    st.session_state.selected_view = "Overall (All Regions)"
+if "region_analyses" not in st.session_state:
+    st.session_state.region_analyses = {}
 
 # ── Upload UI ───────────────────────────────────────────────────────────────────
-if st.session_state.analysis is None:
+if st.session_state.results is None:
     st.markdown('<div class="eyebrow">Analysis Portal</div>', unsafe_allow_html=True)
     st.markdown("## Fleet Intelligence for Love's Sales Team")
     st.markdown("Choose an analysis type, upload your report, and get an executive-ready insight summary in seconds.")
@@ -617,7 +658,6 @@ if st.session_state.analysis is None:
                 national_wow = ((national_volume - national_prior) / national_prior * 100) if national_prior else 0
 
                 st.session_state.results = results
-                st.session_state.analysis = claude_output
                 st.session_state.mode = "weekly"
                 st.session_state.summary = {
                     "report_date": results["report_date"],
@@ -630,6 +670,9 @@ if st.session_state.analysis is None:
                     "region_count": len(results["region_summary"]),
                     "newly_dark_count": len(results["fuel_newly_dark"]),
                 }
+                st.session_state.available_regions = ["Overall (All Regions)"] + get_filterable_regions(results)
+                st.session_state.selected_view = "Overall (All Regions)"
+                st.session_state.region_analyses = {"Overall (All Regions)": claude_output}
                 st.session_state.chat_history = []
                 st.rerun()
 
@@ -695,7 +738,6 @@ if st.session_state.analysis is None:
 else:
     s = st.session_state.summary
     results = st.session_state.results
-    analysis = st.session_state.analysis
     mode = st.session_state.mode
 
     col_title, col_btn = st.columns([4, 1])
@@ -709,6 +751,9 @@ else:
             st.session_state.mode = None
             st.session_state.summary = None
             st.session_state.chat_history = []
+            st.session_state.available_regions = ["Overall (All Regions)"]
+            st.session_state.selected_view = "Overall (All Regions)"
+            st.session_state.region_analyses = {}
             st.rerun()
 
     st.markdown("<hr style='border:none;border-top:3px solid #d90d0d;margin:8px 0 20px 0;'>", unsafe_allow_html=True)
@@ -735,16 +780,52 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
+    if mode == "weekly":
+        col_select, col_spacer = st.columns([2, 3])
+        with col_select:
+            selected_view = st.selectbox(
+                "View summary for:",
+                st.session_state.available_regions,
+                index=st.session_state.available_regions.index(st.session_state.selected_view)
+                if st.session_state.selected_view in st.session_state.available_regions else 0,
+                key="region_view_selector"
+            )
+        st.session_state.selected_view = selected_view
+
+        if selected_view not in st.session_state.region_analyses:
+            with st.spinner(f"Building summary for {selected_view}... this takes about 30-60 seconds."):
+                filtered = filter_results_by_region(results, selected_view)
+                region_prompt, region_table_map = build_claude_prompt(filtered)
+                client = anthropic.Anthropic(
+                    api_key=get_api_key(),
+                    http_client=httpx2.Client(verify=False)
+                )
+                region_message = client.messages.create(
+                    model="claude-opus-4-6",
+                    max_tokens=MAX_TOKENS,
+                    messages=[{"role": "user", "content": region_prompt}]
+                )
+                region_output = region_message.content[0].text
+                for token, table_text in region_table_map.items():
+                    region_output = region_output.replace(token, table_text)
+                st.session_state.region_analyses[selected_view] = region_output
+
+        analysis = st.session_state.region_analyses[selected_view]
+    else:
+        analysis = st.session_state.analysis
+
     st.markdown('<div class="analysis-card"><div class="card-label">Executive Insight Summary</div>', unsafe_allow_html=True)
     st.markdown(analysis.replace(chr(96), "").replace("$", "\\$"))
     st.markdown('</div>', unsafe_allow_html=True)
 
     period_label = s.get("report_date") or s.get("period") or "report"
+    view_suffix = f"_{st.session_state.selected_view}" if mode == "weekly" else ""
     st.download_button(
         label="Download Analysis as Text",
         data=analysis,
-        file_name=f"fleet_analysis_{period_label}.txt",
-        mime="text/plain"
+        file_name=f"fleet_analysis_{period_label}{view_suffix}.txt",
+        mime="text/plain",
+        key=f"download_{st.session_state.get('selected_view', 'x')}"
     )
 
     import pandas as pd
