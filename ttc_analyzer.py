@@ -131,7 +131,10 @@ def analyze_manager_rollup(ws, sheet_name, manager, week_dates):
 def analyze_rep_swings(ws, sheet_name, manager, roster):
     """This-week-vs-prior-week delta for every rep under this manager -- used to find
     the single biggest unit-count swing, which is the real 'story' (the team rollup's
-    own week-over-week move is often too small to be meaningful on its own)."""
+    own week-over-week move is often too small to be meaningful on its own).
+    Also pulls last year's same-week value for that rep, computed from the sheet's
+    own YOY-delta column (the source file stores the DIFFERENCE vs last year, not
+    last year's absolute value, so last_year = this_week - yoy_delta)."""
     col_map = TTC_REGION_COLS[sheet_name]
     rows = list(ws.iter_rows(values_only=True))
     swings = []
@@ -146,10 +149,12 @@ def analyze_rep_swings(ws, sheet_name, manager, roster):
         week_start = col_map["week_start"]
         this_week = safe_float(row[week_start]) if week_start < len(row) else None
         prior_week = safe_float(row[week_start + 1]) if week_start + 1 < len(row) else None
+        yoy_delta = safe_float(row[col_map["yoy"]]) if col_map["yoy"] < len(row) else None
         if this_week is None or prior_week is None:
             continue
         delta = this_week - prior_week
-        swings.append({"name": name, "this_week": this_week, "prior_week": prior_week, "delta": delta})
+        last_year = (this_week - yoy_delta) if yoy_delta is not None else None
+        swings.append({"name": name, "this_week": this_week, "prior_week": prior_week, "delta": delta, "last_year": last_year})
     swings.sort(key=lambda x: abs(x["delta"]), reverse=True)
     return swings
 
