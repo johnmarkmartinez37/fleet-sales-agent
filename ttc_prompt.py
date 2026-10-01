@@ -89,11 +89,11 @@ def build_ttc_prompt(manager, results):
 
         # ── Rep breakdown pre-built table ────────────────────────────────────────
         rep_rows = [
-            [s["name"], ttc_fmt_num(s["this_week"], unit), ttc_fmt_num(s["prior_week"], unit), ttc_fmt_num(s["delta"], unit)]
+            [s["name"], ttc_fmt_num(s["this_week"], unit), ttc_fmt_num(s["prior_week"], unit), ttc_fmt_num(s["delta"], unit), ttc_fmt_num(s.get("last_year"), unit)]
             for s in all_swings
         ]
         token = f"%%REP_TABLE_{sheet.upper().replace(' ', '_')}%%"
-        table_map[token] = ttc_md_table(["Rep", "This Week", "Prior Week", "Change"], rep_rows)
+        table_map[token] = ttc_md_table(["Rep", "This Week", "Prior Week", "Change", "Last Year"], rep_rows)
 
         # ── Flagged customer movers pre-built table ──────────────────────────────
         all_flagged = []
