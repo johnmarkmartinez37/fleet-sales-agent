@@ -39,7 +39,7 @@ def get_week_dates(ws):
 def parse_ttc_roster(ws):
     """Build rep -> senior manager mapping from the Region file's hierarchy block.
     Row order is NOT reliable (varies by sheet), so managers are detected by name,
-    and 'Inside' is hardcoded to Brett Moody regardless of where it falls in the sheet."""
+    and 'Inside' is excluded entirely regardless of where it falls in the sheet."""
     rows = list(ws.iter_rows(values_only=True))
     start = None
     for i, row in enumerate(rows):
@@ -60,7 +60,7 @@ def parse_ttc_roster(ws):
             current_manager = name
             continue
         if name == "Inside":
-            current_manager = TTC_INSIDE_MANAGER
+            current_manager = None  # Inside Sales has its own separate manager -- exclude entirely, don't attribute to Brett/Keith/TJ
             continue
         if current_manager:
             roster[name] = current_manager
