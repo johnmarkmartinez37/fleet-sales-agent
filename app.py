@@ -160,7 +160,9 @@ html, body, [class*="css"] { font-family: 'Montserrat', sans-serif; }
 # ── Imports from existing modules ───────────────────────────────────────────────
 from analyzer import analyze_reports
 from monthly_analyzer import analyze_monthly_report
-from config import METRIC_UNITS, MAX_TOKENS, INSIDE_SALES_REGIONS
+from ttc_analyzer import analyze_ttc_reports
+from ttc_prompt import build_ttc_prompt
+from config import METRIC_UNITS, MAX_TOKENS, INSIDE_SALES_REGIONS, TTC_MANAGER_DISPLAY
 
 # ── API Key ─────────────────────────────────────────────────────────────────────
 def get_api_key():
@@ -601,14 +603,22 @@ if "selected_view" not in st.session_state:
     st.session_state.selected_view = "Overall (All Regions)"
 if "region_analyses" not in st.session_state:
     st.session_state.region_analyses = {}
+if "ttc_results" not in st.session_state:
+    st.session_state.ttc_results = None
+if "ttc_available_managers" not in st.session_state:
+    st.session_state.ttc_available_managers = ["Overall (All Managers)"]
+if "ttc_selected_view" not in st.session_state:
+    st.session_state.ttc_selected_view = "Overall (All Managers)"
+if "ttc_analyses" not in st.session_state:
+    st.session_state.ttc_analyses = {}
 
 # ── Upload UI ───────────────────────────────────────────────────────────────────
-if st.session_state.results is None:
+if st.session_state.mode is None:
     st.markdown('<div class="eyebrow">Analysis Portal</div>', unsafe_allow_html=True)
     st.markdown("## Fleet Intelligence for Love's Sales Team")
     st.markdown("Choose an analysis type, upload your report, and get an executive-ready insight summary in seconds.")
 
-    tab_weekly, tab_monthly = st.tabs(["Weekly Analysis", "Monthly Analysis"])
+    tab_weekly, tab_monthly, tab_ttc = st.tabs(["Weekly Analysis", "Monthly Analysis", "Truck Care Analysis"])
 
     with tab_weekly:
         st.markdown("#### Upload Reports")
@@ -734,16 +744,81 @@ if st.session_state.results is None:
                     except Exception:
                         pass
 
+    with tab_ttc:
+        st.markdown("#### Upload Reports")
+        st.markdown("Customer and Region reports are required. The Monthly Sales Report is optional -- upload it only once it's re-exported each month; it adds Profit/PPG and the new-vs-retread tire split, labeled with its own period, without replacing any of the current-week numbers below.")
+        col1, col2 = st.columns(2)
+        with col1:
+            ttc_customer_file = st.file_uploader("Customer Report (TTC)", type=["xlsx", "xls"], key="ttc_customer_upload", help="13 Week Trend Report by Customer (Truck Care)")
+        with col2:
+            ttc_region_file = st.file_uploader("Region Report (TTC)", type=["xlsx", "xls"], key="ttc_region_upload", help="13 Week Trend Report by Region (Truck Care)")
+        ttc_monthly_file = st.file_uploader("Monthly Sales Report (optional)", type=["xlsx", "xls"], key="ttc_monthly_upload", help="Re-exported monthly -- adds Profit/PPG and tire-type split only")
+
+        ttc_ready = ttc_customer_file is not None and ttc_region_file is not None
+        if st.button("ANALYZE REPORTS", disabled=not ttc_ready, key="btn_ttc"):
+            ttc_customer_path = None
+            ttc_region_path = None
+            ttc_monthly_path = None
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as cf:
+                    cf.write(ttc_customer_file.read())
+                    ttc_customer_path = cf.name
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as rf:
+                    rf.write(ttc_region_file.read())
+                    ttc_region_path = rf.name
+                if ttc_monthly_file:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as mf:
+                        mf.write(ttc_monthly_file.read())
+                        ttc_monthly_path = mf.name
+
+                with st.spinner("Analyzing Truck Care reports... this takes about 60 seconds."):
+                    ttc_results = analyze_ttc_reports(ttc_customer_path, ttc_region_path, ttc_monthly_path)
+                    overall_prompt, overall_table_map = build_ttc_prompt("Overall (All Managers)", ttc_results)
+                    client = anthropic.Anthropic(
+                        api_key=get_api_key(),
+                        http_client=httpx2.Client(verify=False)
+                    )
+                    overall_message = client.messages.create(
+                        model="claude-opus-4-6",
+                        max_tokens=MAX_TOKENS,
+                        messages=[{"role": "user", "content": overall_prompt}]
+                    )
+                    overall_output = overall_message.content[0].text
+                    for token, table_text in overall_table_map.items():
+                        overall_output = overall_output.replace(token, table_text)
+
+                st.session_state.ttc_results = ttc_results
+                st.session_state.mode = "truck_care"
+                st.session_state.ttc_available_managers = ["Overall (All Managers)", "Brett Moody", "Keith Taggart", "TJ Atwood"]
+                st.session_state.ttc_selected_view = "Overall (All Managers)"
+                st.session_state.ttc_analyses = {"Overall (All Managers)": overall_output}
+                st.session_state.chat_history = []
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Analysis failed: {str(e)}")
+            finally:
+                for p in [ttc_customer_path, ttc_region_path, ttc_monthly_path]:
+                    if p:
+                        try:
+                            os.unlink(p)
+                        except Exception:
+                            pass
+
 # ── Results UI ──────────────────────────────────────────────────────────────────
 else:
-    s = st.session_state.summary
-    results = st.session_state.results
     mode = st.session_state.mode
+    s = st.session_state.summary if mode in ("weekly", "monthly") else None
 
     col_title, col_btn = st.columns([4, 1])
     with col_title:
-        period_label = s.get("report_date") or s.get("period") or ""
-        st.markdown(f'<div class="results-title">Fleet Sales <span>Insights</span> &nbsp;<small style="font-size:13px;color:#666;font-family:\'DM Mono\',monospace;font-weight:400;">Period {period_label}</small></div>', unsafe_allow_html=True)
+        if mode == "truck_care":
+            title_text = "Truck Care <span>Insights</span>"
+        else:
+            title_text = "Fleet Sales <span>Insights</span>"
+            period_label = s.get("report_date") or s.get("period") or ""
+            title_text += f' &nbsp;<small style="font-size:13px;color:#666;font-family:\'DM Mono\',monospace;font-weight:400;">Period {period_label}</small>'
+        st.markdown(f'<div class="results-title">{title_text}</div>', unsafe_allow_html=True)
     with col_btn:
         if st.button("New Analysis"):
             st.session_state.results = None
@@ -754,11 +829,16 @@ else:
             st.session_state.available_regions = ["Overall (All Regions)"]
             st.session_state.selected_view = "Overall (All Regions)"
             st.session_state.region_analyses = {}
+            st.session_state.ttc_results = None
+            st.session_state.ttc_available_managers = ["Overall (All Managers)"]
+            st.session_state.ttc_selected_view = "Overall (All Managers)"
+            st.session_state.ttc_analyses = {}
             st.rerun()
 
     st.markdown("<hr style='border:none;border-top:3px solid #d90d0d;margin:8px 0 20px 0;'>", unsafe_allow_html=True)
 
     if mode == "weekly":
+        results = st.session_state.results
         best_wow = f"+{s['best_region_wow']:.1f}%" if s['best_region_wow'] > 0 else f"{s['best_region_wow']:.1f}%"
         worst_wow = f"+{s['worst_region_wow']:.1f}%" if s['worst_region_wow'] > 0 else f"{s['worst_region_wow']:.1f}%"
         nat_vol = f"{s['national_volume']/1e6:.1f}M GAL" if s['national_volume'] else "N/A"
@@ -771,12 +851,28 @@ else:
             <div class="stat-card danger"><div class="stat-value">{s['newly_dark_count']}</div><div class="stat-label">Newly Dark Accounts</div></div>
         </div>
         """, unsafe_allow_html=True)
-    else:
+    elif mode == "monthly":
+        results = st.session_state.results
         st.markdown(f"""
         <div class="stat-row">
             <div class="stat-card"><div class="stat-value">{s['region_count']}</div><div class="stat-label">Regions</div></div>
             <div class="stat-card"><div class="stat-value">{s['manager_count']}</div><div class="stat-label">Area Managers</div></div>
             <div class="stat-card danger"><div class="stat-value">{s['declining_count']}</div><div class="stat-label">Declining Accounts ({s['trend_window']}-Mo Window)</div></div>
+        </div>
+        """, unsafe_allow_html=True)
+    elif mode == "truck_care":
+        ttc_results = st.session_state.ttc_results
+        roster_size = len(ttc_results.get("roster", {}))
+        monthly_note = ttc_results.get("monthly", {}).get("period") if ttc_results.get("monthly") else "Not uploaded"
+        total_flagged = sum(
+            len(v) for mgr in ttc_results.get("flagged_customers", {}).values() for v in mgr.values()
+        )
+        st.markdown(f"""
+        <div class="stat-row">
+            <div class="stat-card"><div class="stat-value">3</div><div class="stat-label">Managers Tracked</div></div>
+            <div class="stat-card"><div class="stat-value">{roster_size}</div><div class="stat-label">Reps in Roster</div></div>
+            <div class="stat-card danger"><div class="stat-value">{total_flagged}</div><div class="stat-label">Flagged Customer Movers</div></div>
+            <div class="stat-card"><div class="stat-value">{monthly_note}</div><div class="stat-label">Monthly Data Period</div></div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -811,6 +907,39 @@ else:
                 st.session_state.region_analyses[selected_view] = region_output
 
         analysis = st.session_state.region_analyses[selected_view]
+    elif mode == "truck_care":
+        ttc_results = st.session_state.ttc_results
+        col_select, col_spacer = st.columns([2, 3])
+        with col_select:
+            ttc_selected_view = st.selectbox(
+                "View summary for:",
+                st.session_state.ttc_available_managers,
+                index=st.session_state.ttc_available_managers.index(st.session_state.ttc_selected_view)
+                if st.session_state.ttc_selected_view in st.session_state.ttc_available_managers else 0,
+                format_func=lambda m: TTC_MANAGER_DISPLAY.get(m, m),
+                key="ttc_view_selector"
+            )
+        st.session_state.ttc_selected_view = ttc_selected_view
+
+        if ttc_selected_view not in st.session_state.ttc_analyses:
+            display_name = TTC_MANAGER_DISPLAY.get(ttc_selected_view, ttc_selected_view)
+            with st.spinner(f"Building summary for {display_name}... this takes about 30-60 seconds."):
+                mgr_prompt, mgr_table_map = build_ttc_prompt(ttc_selected_view, ttc_results)
+                client = anthropic.Anthropic(
+                    api_key=get_api_key(),
+                    http_client=httpx2.Client(verify=False)
+                )
+                mgr_message = client.messages.create(
+                    model="claude-opus-4-6",
+                    max_tokens=MAX_TOKENS,
+                    messages=[{"role": "user", "content": mgr_prompt}]
+                )
+                mgr_output = mgr_message.content[0].text
+                for token, table_text in mgr_table_map.items():
+                    mgr_output = mgr_output.replace(token, table_text)
+                st.session_state.ttc_analyses[ttc_selected_view] = mgr_output
+
+        analysis = st.session_state.ttc_analyses[ttc_selected_view]
     else:
         analysis = st.session_state.analysis
 
@@ -818,15 +947,25 @@ else:
     st.markdown(analysis.replace(chr(96), "").replace("$", "\\$"))
     st.markdown('</div>', unsafe_allow_html=True)
 
-    period_label = s.get("report_date") or s.get("period") or "report"
-    view_suffix = f"_{st.session_state.selected_view}" if mode == "weekly" else ""
-    st.download_button(
-        label="Download Analysis as Text",
-        data=analysis,
-        file_name=f"fleet_analysis_{period_label}{view_suffix}.txt",
-        mime="text/plain",
-        key=f"download_{st.session_state.get('selected_view', 'x')}"
-    )
+    if mode == "truck_care":
+        download_label = TTC_MANAGER_DISPLAY.get(st.session_state.ttc_selected_view, st.session_state.ttc_selected_view)
+        st.download_button(
+            label="Download Analysis as Text",
+            data=analysis,
+            file_name=f"truck_care_analysis_{download_label.replace(' ', '_')}.txt",
+            mime="text/plain",
+            key=f"download_ttc_{st.session_state.get('ttc_selected_view', 'x')}"
+        )
+    else:
+        period_label = s.get("report_date") or s.get("period") or "report"
+        view_suffix = f"_{st.session_state.selected_view}" if mode == "weekly" else ""
+        st.download_button(
+            label="Download Analysis as Text",
+            data=analysis,
+            file_name=f"fleet_analysis_{period_label}{view_suffix}.txt",
+            mime="text/plain",
+            key=f"download_{st.session_state.get('selected_view', 'x')}"
+        )
 
     import pandas as pd
 
