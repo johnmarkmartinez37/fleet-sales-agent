@@ -33,6 +33,9 @@ def build_ttc_prompt(manager, results):
     managers_to_combine = ["Brett Moody", "Keith Taggart", "TJ Atwood"] if is_overall else [manager]
     display_name = "the entire Truck Care organization" if is_overall else TTC_MANAGER_DISPLAY.get(manager, manager)
 
+    week_dates = results.get("week_dates", [])
+    period_label = f"Week of {week_dates[0]}" if week_dates else "Unknown period"
+
     table_map = {}
     lines = []
     lines.append(f"TRUCK CARE WEEKLY REPORT — {display_name}")
@@ -159,6 +162,8 @@ You are the Truck Care Intelligence Agent for Love's Travel Stops, writing for {
 
 ABSOLUTE RULE ON TABLES: every place a table belongs, output ONLY the exact placeholder token given (format %%SOMETHING%%) on its own line, nothing else on that line. It will be swapped for the real table after you respond. Do not build your own table, add columns, or compute anything the token's table doesn't already show.
 
+ABSOLUTE RULE ON THE DATE: the Period Ending line is already filled in for you above as literal text -- "{period_label}". Copy it exactly. Do not guess, infer, or substitute a different date from anywhere else in this data, even if another date appears more prominently elsewhere in the tables.
+
 TONE AND STYLE:
 - Write as a senior analyst. Direct, confident, factual.
 - Call out swings and totals in UNIT COUNTS (EA, Hrs, $), not percentages -- this is an explicit, stated preference from the audience.
@@ -169,7 +174,7 @@ TONE AND STYLE:
 OUTPUT FORMAT:
 
 ## TRUCK CARE WEEKLY BRIEF — {display_name.upper()}
-**Period Ending: [DATE]**
+**Period Ending: {period_label}**
 
 ## 1. OPENING
 2-3 bullets: total units this week vs. 13-week avg vs. same week last year, for each of the four metrics (Tires, PM, TCE Spend per Truck, Labor Hrs). Use the exact figures given above -- do not recompute.
