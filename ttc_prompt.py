@@ -108,6 +108,27 @@ def build_ttc_prompt(manager, results):
         table_map[cust_token] = ttc_md_table(["Customer", "Rep", "This Week", "Prior Week", "Change"], cust_rows)
         lines.append(f"  {len(all_flagged)} customer accounts flagged for notable {sheet} movement this period.")
 
+    # ── Regional comparison (only for a single-manager view, not Overall) ──────────
+    comparison_lines = []
+    if not is_overall:
+        all_managers_order = ["Brett Moody", "Keith Taggart", "TJ Atwood"]
+        other_managers = [m for m in all_managers_order if m != manager]
+        for sheet in TTC_METRIC_SHEETS:
+            unit = TTC_METRIC_UNITS.get(sheet, "")
+            parts = []
+            for om in other_managers:
+                r_other = results["manager_rollups"].get(om, {}).get(sheet)
+                if r_other:
+                    parts.append(
+                        f"{TTC_MANAGER_DISPLAY.get(om, om)}: this week {ttc_fmt_num(r_other['this_week'], unit)}, "
+                        f"vs 13Wk Avg {ttc_fmt_pct(r_other['curr_ov_avg'])}"
+                    )
+            if parts:
+                comparison_lines.append(f"  {sheet}: " + " | ".join(parts))
+        if comparison_lines:
+            lines.append("\nCOMPARISON DATA -- the other two managers' same-week figures, for context only (do not build a table, write 2-3 prose sentences instead):")
+            lines.extend(comparison_lines)
+
     # ── Monthly (optional) ───────────────────────────────────────────────────────
     monthly_available = results.get("monthly") is not None
     if monthly_available:
@@ -134,6 +155,17 @@ def build_ttc_prompt(manager, results):
         lines.append(f"  YOY Tires & Retreads (monthly): {ttc_fmt_num(yoy_tires, 'EA')}")
 
     prompt = "\n".join(lines)
+
+    comparison_section_instruction = (
+        "Using the COMPARISON DATA given above, write 2-3 sentences comparing this manager's movement this week "
+        "to the other two managers, for whichever metrics show the most notable difference or similarity. "
+        "State plainly whether a trend is isolated to this manager's territory or showing up broadly across other regions too "
+        "(e.g. 'Compared to East and National accounts, West's tire decline looks isolated -- both other regions are tracking near their 13-week average.'). "
+        "Do not build a table here, this is prose only."
+        if (not is_overall and comparison_lines) else
+        "This is the combined view across all three managers, so a regional comparison does not apply here -- skip this section "
+        "with a single sentence noting that, or omit it entirely."
+    )
 
     monthly_section_instruction = (
         "Insert one short subsection using the MONTHLY DATA given above -- Profit [All-In], PPG if given, "
@@ -179,24 +211,27 @@ OUTPUT FORMAT:
 ## 1. OPENING
 2-3 bullets: total units this week vs. 13-week avg vs. same week last year, for each of the four metrics (Tires, PM, TCE Spend per Truck, Labor Hrs). Use the exact figures given above -- do not recompute.
 
-## 2. THIS WEEK'S STORY
+## 2. REGIONAL COMPARISON
+{comparison_section_instruction}
+
+## 3. THIS WEEK'S STORY
 1-2 bullets on the single biggest swing(s) called out above, in unit counts. Name the rep and the account context if relevant.
 
-## 3. WEEKLY HIGHS AND LOWS (13-WEEK WINDOW)
+## 4. WEEKLY HIGHS AND LOWS (13-WEEK WINDOW)
 For each metric, one bullet stating the 13-week high and low (value and week), and where this week sits relative to both. This is the section that replaces the misleading single-week WoW framing -- make clear whether this week is near a recent high, a recent low, or mid-range.
 
-## 4. MONTHLY VIEW
+## 5. MONTHLY VIEW
 {monthly_section_instruction}
 
-## 5. REP BREAKDOWN
+## 6. REP BREAKDOWN
 {rep_table_tokens}
 After all four tables: 2-3 bullets noting which reps are moving most, in either direction.
 
-## 6. NOTABLE CUSTOMER ACCOUNTS
+## 7. NOTABLE CUSTOMER ACCOUNTS
 {customer_table_tokens}
 After all four tables: 2-3 bullets on the customers driving the biggest movement this period.
 
-## 7. CLOSING TAKEAWAYS
+## 8. CLOSING TAKEAWAYS
 2-3 bullets. Each names a specific rep or customer, states a specific unit-count number, surfaces an observation worth remembering.
 
 DATA CONTEXT:
