@@ -131,6 +131,7 @@ def build_ttc_prompt(manager, results):
 
     # ── Monthly (optional) ───────────────────────────────────────────────────────
     monthly_available = results.get("monthly") is not None
+    has_monthly_trend = False
     if monthly_available:
         monthly = results["monthly"]
         period = monthly.get("period", "Unknown period")
@@ -154,6 +155,55 @@ def build_ttc_prompt(manager, results):
         lines.append(f"  New Tire Quantity: {ttc_fmt_num(tire_qty, 'EA')} | Retread Quantity: {ttc_fmt_num(retread_qty, 'EA')}")
         lines.append(f"  YOY Tires & Retreads (monthly): {ttc_fmt_num(yoy_tires, 'EA')}")
 
+        # ── 13-month trend (Tires & Retreads, PM, Labor Hrs -- no TCE history tab exists) ──
+        monthly_trend = monthly.get("monthly_trend", {})
+        trend_units = {"Tires & Retreads": "EA", "PM": "EA", "Labor Hrs": "Hrs"}
+        for metric, data in monthly_trend.items():
+            month_labels = data.get("month_labels", [])
+            by_manager = data.get("by_manager", {})
+            unit = trend_units.get(metric, "")
+
+            if is_overall:
+                combined_series = [0.0] * 13
+                combined_has_data = [False] * 13
+                any_mgr_data = False
+                for m in managers_to_combine:
+                    mdata = by_manager.get(m)
+                    if not mdata:
+                        continue
+                    any_mgr_data = True
+                    for i in range(13):
+                        if mdata["has_data"][i]:
+                            combined_series[i] += mdata["series"][i]
+                            combined_has_data[i] = True
+                if not any_mgr_data:
+                    continue
+                valid = [(month_labels[i], combined_series[i]) for i in range(13) if combined_has_data[i]]
+                if not valid:
+                    continue
+                high_month, high_val = max(valid, key=lambda x: x[1])
+                low_month, low_val = min(valid, key=lambda x: x[1])
+                this_month = combined_series[0]
+                last_year = combined_series[12] if combined_has_data[12] else None
+                has_monthly_trend = True
+                lines.append(
+                    f"  MONTHLY TREND {metric} (fleet-wide): this month {ttc_fmt_num(this_month, unit)} | "
+                    f"same month last year {ttc_fmt_num(last_year, unit)} | "
+                    f"13-month HIGH {ttc_fmt_num(high_val, unit)} ({high_month}) | "
+                    f"13-month LOW {ttc_fmt_num(low_val, unit)} ({low_month})"
+                )
+            else:
+                mdata = by_manager.get(manager)
+                if not mdata:
+                    continue
+                has_monthly_trend = True
+                lines.append(
+                    f"  MONTHLY TREND {metric}: this month {ttc_fmt_num(mdata['this_month'], unit)} | "
+                    f"same month last year {ttc_fmt_num(mdata['last_year'], unit)} | "
+                    f"13-month HIGH {ttc_fmt_num(mdata['high_val'], unit)} ({mdata['high_month']}) | "
+                    f"13-month LOW {ttc_fmt_num(mdata['low_val'], unit)} ({mdata['low_month']})"
+                )
+
     prompt = "\n".join(lines)
 
     comparison_section_instruction = (
@@ -168,13 +218,22 @@ def build_ttc_prompt(manager, results):
     )
 
     monthly_section_instruction = (
-        "Insert one short subsection using the MONTHLY DATA given above -- Profit [All-In], PPG if given, "
-        "and the new-vs-retread tire split. Label it clearly with the Monthly file's own period (e.g. 'As of August 2026') "
-        "so it is never confused with this week's figures. There is no 'Used Tire' figure anywhere in the data -- "
-        "do not invent one or mention a three-way split."
+        (
+            "Using the MONTHLY DATA given above, write: "
+            "(1) 1-2 bullets with Profit [All-In], PPG if given, and the new-vs-retread tire split -- "
+            "there is no 'Used Tire' figure anywhere in the data, do not invent one or mention a three-way split; "
+            "(2) one bullet per MONTHLY TREND line given above (Tires & Retreads, PM, Labor Hrs) stating this month's "
+            "figure, the 13-month high and low (value and month), and where this month sits relative to both -- "
+            "this mirrors the weekly highs/lows section but at monthly grain, so make clear whether this month is "
+            "near a recent high, a recent low, or mid-range; "
+            "(3) TCE Spend per Truck has no monthly trend data available (no history tab exists for it in this report) -- "
+            "do not fabricate a monthly high/low for it. "
+            "Label the whole subsection clearly with the Monthly file's own period (e.g. 'As of September 2026') "
+            "so it is never confused with this week's figures."
+        )
         if monthly_available else
-        "No Monthly file was uploaded this period. Write one sentence noting that Profit/PPG and the tire-type split "
-        "are not available without it, and move on -- do not fabricate or estimate these figures from weekly data."
+        "No Monthly file was uploaded this period. Write one sentence noting that Profit/PPG, the tire-type split, "
+        "and the monthly trend view are not available without it, and move on -- do not fabricate or estimate these figures from weekly data."
     )
 
     rep_table_tokens = "\n".join(
