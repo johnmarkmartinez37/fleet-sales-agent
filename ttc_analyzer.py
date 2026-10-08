@@ -205,12 +205,65 @@ def find_col(header_row, label, exclude=None):
     return None
 
 
-def analyze_ttc_monthly(monthly_path):
-    """Pull Profit/PPG and the new-vs-retread tire split for each manager's tab.
-    Entirely optional data -- only called if a Monthly file was uploaded."""
-    from config import TTC_MONTHLY_TAB_BY_MANAGER
+def parse_monthly_history_tab(ws, roster, month_start_idx, known_managers):
+    """A '13 Mo History' tab is customer-grain, wide-format: rep | customer | SAP ID |
+    region code | (category/unit) | 13 month columns (newest first) | Overall Result.
+    Sums every customer row up to its manager via the SAME roster built from the
+    weekly Region file -- rep names are consistent between the weekly and monthly
+    exports, so no separate monthly-specific roster is needed."""
+    rows = list(ws.iter_rows(values_only=True))
+    header = rows[0]
+    month_labels = [header[month_start_idx + i] for i in range(13)]
 
-    results = {"period": None, "by_manager": {}, "errors": []}
+    manager_totals = {m: [0.0] * 13 for m in known_managers}
+    manager_has_data = {m: [False] * 13 for m in known_managers}
+
+    for row in rows[1:]:
+        if not row or row[0] is None:
+            continue
+        rep = str(row[0]).strip()
+        manager = roster.get(rep)
+        if manager not in known_managers:
+            continue
+        for i in range(13):
+            idx = month_start_idx + i
+            val = row[idx] if idx < len(row) else None
+            if val is not None:
+                try:
+                    manager_totals[manager][i] += float(val)
+                    manager_has_data[manager][i] = True
+                except (TypeError, ValueError):
+                    pass
+
+    return month_labels, manager_totals, manager_has_data
+
+
+def compute_monthly_high_low(month_labels, series, has_data):
+    valid = [(month_labels[i], series[i]) for i in range(13) if has_data[i]]
+    if not valid:
+        return None
+    high_month, high_val = max(valid, key=lambda x: x[1])
+    low_month, low_val = min(valid, key=lambda x: x[1])
+    return {
+        "this_month": series[0],
+        "last_year": series[12] if has_data[12] else None,
+        "high_val": high_val, "high_month": high_month,
+        "low_val": low_val, "low_month": low_month,
+    }
+
+
+def analyze_ttc_monthly(monthly_path, roster=None):
+    """Pull Profit/PPG and the new-vs-retread tire split for each manager's tab
+    (current-month snapshot), plus a true 13-month trend (high/low, this month,
+    same month last year) for Tires & Retreads, PM, and Labor Hrs, if the uploaded
+    file has those '13 Mo History' tabs. TCE Spend per Truck has no equivalent
+    history tab in this report, so it stays snapshot-only. Entirely optional data --
+    only called if a Monthly file was uploaded. roster is the same manager-roster
+    already built from the weekly Region file."""
+    from config import TTC_MONTHLY_TAB_BY_MANAGER, TTC_KNOWN_MANAGERS
+
+    results = {"period": None, "by_manager": {}, "monthly_trend": {}, "errors": []}
+    roster = roster or {}
     try:
         wb = openpyxl.load_workbook(monthly_path, data_only=True)
         for i, row in enumerate(wb[list(wb.sheetnames)[1]].iter_rows(values_only=True)):
@@ -239,6 +292,26 @@ def analyze_ttc_monthly(monthly_path):
                 "retread_qty": safe_float(grand_total[col_retreadqty]) if col_retreadqty is not None else None,
                 "yoy_tires_retreads": safe_float(grand_total[col_yoy_tires]) if col_yoy_tires is not None else None,
             }
+
+        history_tabs = {
+            "Tires & Retreads": ("13 Mo History -Tires & Retreads", 6),
+            "PM": ("13 Mo History - PM", 5),
+            "Labor Hrs": ("13 Mo History - LMS Labor Hrs", 5),
+        }
+        for metric, (sheet_name, month_start) in history_tabs.items():
+            if sheet_name not in wb.sheetnames:
+                continue
+            ws = wb[sheet_name]
+            month_labels, totals, has_data = parse_monthly_history_tab(
+                ws, roster, month_start, TTC_KNOWN_MANAGERS
+            )
+            results["monthly_trend"][metric] = {"month_labels": month_labels, "by_manager": {}}
+            for manager in TTC_KNOWN_MANAGERS:
+                hl = compute_monthly_high_low(month_labels, totals[manager], has_data[manager])
+                if hl:
+                    hl["series"] = totals[manager]
+                    hl["has_data"] = has_data[manager]
+                    results["monthly_trend"][metric]["by_manager"][manager] = hl
     except Exception as e:
         results["errors"].append(f"Monthly file error: {str(e)}")
     return results
@@ -308,6 +381,6 @@ def analyze_ttc_reports(customer_path, region_path, monthly_path=None):
         results["errors"].append(f"Customer file error: {str(e)}")
 
     if monthly_path:
-        results["monthly"] = analyze_ttc_monthly(monthly_path)
+        results["monthly"] = analyze_ttc_monthly(monthly_path, results["roster"])
 
     return results
