@@ -151,7 +151,7 @@ def build_ttc_prompt(manager, results):
         lines.append(f"\nMONTHLY DATA — Period: {period} (from the separately-uploaded Monthly Sales Report, NOT this week's data -- label it with this period explicitly, never imply it is current-week):")
         lines.append(f"  Profit [All-In]: {ttc_fmt_num(profit, '$')}")
         if ppg is not None:
-            lines.append(f"  PPG [All-In]: {ttc_fmt_num(ppg)}")
+                lines.append(f"  PPG [All-In]: {ttc_fmt_num(ppg, '$')}")
         lines.append(f"  New Tire Quantity: {ttc_fmt_num(tire_qty, 'EA')} | Retread Quantity: {ttc_fmt_num(retread_qty, 'EA')}")
         lines.append(f"  YOY Tires & Retreads (monthly): {ttc_fmt_num(yoy_tires, 'EA')}")
 
