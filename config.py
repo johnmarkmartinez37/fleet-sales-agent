@@ -12,6 +12,8 @@ CUSTOMER_DATA_START_ROW = 7
 REGION_DATA_START_ROW = 6
 
 INSIDE_SALES_REGIONS = {"30", "31", "32", "33", "34", "35", "36", "37", "39", "40", "41", "43", "44"}
+INSIDE_EAST_REGIONS = {"32", "33", "35", "37", "40", "43", "44"}
+INSIDE_WEST_REGIONS = {"30", "31", "34", "36", "39", "41"}
 
 CUSTOMER_COLS = {
     "region":       0,
@@ -65,7 +67,7 @@ TTC_MANAGER_DISPLAY = {
     "Keith Taggart": "Keith Taggart (TTC National Accounts)",
     "TJ Atwood": "TJ Atwood (West)",
 }
-TTC_INSIDE_MANAGER = "Brett Moody"  # "Inside" sub-team always rolls up to Brett regardless of row position
+TTC_INSIDE_MANAGER = "Brett Moody"  # no longer used for attribution (Inside is excluded entirely) -- kept for reference
 
 # Customer file: uniform 21-column layout across all 4 metric sheets
 TTC_CUSTOMER_COLS = {
