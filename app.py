@@ -162,7 +162,7 @@ from analyzer import analyze_reports
 from monthly_analyzer import analyze_monthly_report
 from ttc_analyzer import analyze_ttc_reports
 from ttc_prompt import build_ttc_prompt
-from config import METRIC_UNITS, MAX_TOKENS, INSIDE_SALES_REGIONS, TTC_MANAGER_DISPLAY
+from config import METRIC_UNITS, MAX_TOKENS, INSIDE_SALES_REGIONS, TTC_MANAGER_DISPLAY, INSIDE_EAST_REGIONS, INSIDE_WEST_REGIONS
 
 # ── API Key ─────────────────────────────────────────────────────────────────────
 def get_api_key():
@@ -228,6 +228,24 @@ def filter_results_by_region(results, region):
         "fuel_increases": [a for a in results["fuel_increases"] if a.get("region") == region],
         "non_fuel_alerts": {
             metric: [a for a in alerts if a.get("region") == region]
+            for metric, alerts in results["non_fuel_alerts"].items()
+        },
+        "errors": [],
+    }
+
+
+def filter_results_by_region_group(results, region_set):
+    def in_group(a):
+        return str(a.get("region")).split(".")[0] in region_set
+    return {
+        "report_date": results["report_date"],
+        "region_summary": [],
+        "fuel_main_alerts": [a for a in results["fuel_main_alerts"] if in_group(a)],
+        "fuel_secondary": [a for a in results["fuel_secondary"] if in_group(a)],
+        "fuel_newly_dark": [a for a in results["fuel_newly_dark"] if in_group(a)],
+        "fuel_increases": [a for a in results["fuel_increases"] if in_group(a)],
+        "non_fuel_alerts": {
+            metric: [a for a in alerts if in_group(a)]
             for metric, alerts in results["non_fuel_alerts"].items()
         },
         "errors": [],
@@ -680,7 +698,14 @@ if st.session_state.mode is None:
                     "region_count": len(results["region_summary"]),
                     "newly_dark_count": len(results["fuel_newly_dark"]),
                 }
-                st.session_state.available_regions = ["Overall (All Regions)"] + get_filterable_regions(results)
+                filterable = get_filterable_regions(results)
+                available = ["Overall (All Regions)"]
+                if any(str(r).split(".")[0] in INSIDE_EAST_REGIONS for r in filterable):
+                    available.append("Inside East")
+                if any(str(r).split(".")[0] in INSIDE_WEST_REGIONS for r in filterable):
+                    available.append("Inside West")
+                available += filterable
+                st.session_state.available_regions = available
                 st.session_state.selected_view = "Overall (All Regions)"
                 st.session_state.region_analyses = {"Overall (All Regions)": claude_output}
                 st.session_state.chat_history = []
@@ -746,13 +771,13 @@ if st.session_state.mode is None:
 
     with tab_ttc:
         st.markdown("#### Upload Reports")
-        st.markdown("Customer and Region reports are required. The Monthly Sales Report is optional -- upload it only once it's re-exported each month; it adds Profit/PPG and the new-vs-retread tire split, labeled with its own period, without replacing any of the current-week numbers below.")
+        st.markdown("Customer and Region reports are required. The Monthly Sales Report is optional -- upload it only once it's re-exported each month; it adds Profit/PPG, the new-vs-retread tire split, and a 13-month trend view, labeled with its own period, without replacing any of the current-week numbers below.")
         col1, col2 = st.columns(2)
         with col1:
             ttc_customer_file = st.file_uploader("Customer Report (TTC)", type=["xlsx", "xls"], key="ttc_customer_upload", help="13 Week Trend Report by Customer (Truck Care)")
         with col2:
             ttc_region_file = st.file_uploader("Region Report (TTC)", type=["xlsx", "xls"], key="ttc_region_upload", help="13 Week Trend Report by Region (Truck Care)")
-        ttc_monthly_file = st.file_uploader("Monthly Sales Report (optional)", type=["xlsx", "xls"], key="ttc_monthly_upload", help="Re-exported monthly -- adds Profit/PPG and tire-type split only")
+        ttc_monthly_file = st.file_uploader("Monthly Sales Report (optional)", type=["xlsx", "xls"], key="ttc_monthly_upload", help="Re-exported monthly -- adds Profit/PPG, tire-type split, and 13-month trend")
 
         ttc_ready = ttc_customer_file is not None and ttc_region_file is not None
         if st.button("ANALYZE REPORTS", disabled=not ttc_ready, key="btn_ttc"):
@@ -890,7 +915,12 @@ else:
 
         if selected_view not in st.session_state.region_analyses:
             with st.spinner(f"Building summary for {selected_view}... this takes about 30-60 seconds."):
-                filtered = filter_results_by_region(results, selected_view)
+                if selected_view == "Inside East":
+                    filtered = filter_results_by_region_group(results, INSIDE_EAST_REGIONS)
+                elif selected_view == "Inside West":
+                    filtered = filter_results_by_region_group(results, INSIDE_WEST_REGIONS)
+                else:
+                    filtered = filter_results_by_region(results, selected_view)
                 region_prompt, region_table_map = build_claude_prompt(filtered)
                 client = anthropic.Anthropic(
                     api_key=get_api_key(),
