@@ -110,4 +110,7 @@ TTC_EMAIL_LABELS = {
 # Names whose email is NOT First.Last@loves.com. Key = full name exactly as it appears in the alignment file.
 EMAIL_OVERRIDES = {
     "Peter Ungaro": "pete.ungaro@loves.com",
+    "Stephen Kelly": "steve.kelly@loves.com",
+    "Rigoberto Martinez": "rigo.martinez@loves.com",
+    "Larry Masiulis": "Laurynas.Masiulis@loves.com",
 }
