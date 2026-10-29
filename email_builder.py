@@ -351,14 +351,49 @@ def md_to_html(md):
     return "\n".join(out)
 
 
+SIGNATURE_NAME = "John Mark Martinez"
+SIGNATURE_LINES = [
+    "Fleet Sales Analyst I",
+    "Love\u2019s Travel Stops & Country Stores",
+    "682-597-7011",
+]
+SIGNATURE_LINK = ("Loves.com", "https://www.loves.com/")
+SIGNATURE_SOCIAL = [
+    ("Facebook", "https://www.facebook.com/lovestravelstops/"),
+    ("X", "https://x.com/LovesTravelStop"),
+    ("LinkedIn", "https://www.linkedin.com/company/love's-travel-stops"),
+    ("Instagram", "https://www.instagram.com/lovestravelstops/"),
+]
+
+
+def _link(label, url):
+    return (f'<a href="{html.escape(url, quote=True)}" '
+            f'style="color:#0563C1;text-decoration:underline;">{html.escape(label, quote=False)}</a>')
+
+
+def build_signature_html():
+    """Sign-off plus signature block. Same font and size as the email body."""
+    line = f'font-family:{FONT};font-size:14px;color:#222222;margin:0;'
+    social = " | ".join(_link(label, url) for label, url in SIGNATURE_SOCIAL)
+    rows = [
+        f'<p style="{line}margin-top:16px;">{html.escape(EMAIL_SIGNOFF, quote=False)}</p>',
+        f'<p style="{line}">&nbsp;</p>',
+        f'<p style="{line}"><b>{html.escape(SIGNATURE_NAME, quote=False)}</b></p>',
+    ]
+    rows += [f'<p style="{line}">{html.escape(t, quote=False)}</p>' for t in SIGNATURE_LINES]
+    rows.append(f'<p style="{line}">{_link(*SIGNATURE_LINK)}</p>')
+    rows.append(f'<p style="{line}">{social}</p>')
+    return "\n".join(rows)
+
+
 def build_email_html(greeting_name, brief_md):
-    """The full email body: greeting, the brief, then the sign-off."""
+    """The full email body: greeting, the brief, then the sign-off and signature."""
     p = f'font-family:{FONT};font-size:14px;color:#222222;margin:0 0 10px 0;'
     return (
         f'<div style="font-family:{FONT};font-size:14px;color:#222222;">\n'
         f'<p style="{p}">Hello {html.escape(greeting_name, quote=False)},</p>\n'
         f"{md_to_html(brief_md)}\n"
-        f'<p style="{p}margin-top:16px;">{html.escape(EMAIL_SIGNOFF, quote=False)}</p>\n'
+        f"{build_signature_html()}\n"
         "</div>"
     )
 
