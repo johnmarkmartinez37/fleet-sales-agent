@@ -21,6 +21,19 @@ def clean_field(val):
     return s if s else None
 
 
+def get_report_date(wb):
+    """The 'Calendar Day' value (e.g. 10/20/2026) from the top of any metric sheet."""
+    for sheet in TTC_METRIC_SHEETS:
+        if sheet not in wb.sheetnames:
+            continue
+        for i, row in enumerate(wb[sheet].iter_rows(values_only=True)):
+            if i == 2:
+                if row and len(row) > 1 and row[1]:
+                    return str(row[1])
+                break
+    return None
+
+
 def get_week_dates(ws):
     """Pull the 13 week-ending dates from the header row, newest first."""
     rows = list(ws.iter_rows(values_only=True))
@@ -332,6 +345,7 @@ def analyze_ttc_reports(customer_path, region_path, monthly_path=None):
     from config import TTC_ALERT_THRESHOLDS
 
     results = {
+        "report_date": None,
         "week_dates": [],
         "roster": {},
         "manager_rollups": {},    # manager -> {sheet -> rollup dict}
@@ -344,6 +358,7 @@ def analyze_ttc_reports(customer_path, region_path, monthly_path=None):
 
     try:
         wb_region = openpyxl.load_workbook(region_path, data_only=True)
+        results["report_date"] = get_report_date(wb_region)
         if "Tires" in wb_region.sheetnames:
             results["week_dates"] = get_week_dates(wb_region["Tires"])
         results["roster"] = build_master_roster(wb_region)
@@ -365,6 +380,7 @@ def analyze_ttc_reports(customer_path, region_path, monthly_path=None):
 
     try:
         wb_customer = openpyxl.load_workbook(customer_path, data_only=True)
+        results["report_date"] = get_report_date(wb_customer) or results["report_date"]
         for manager in TTC_KNOWN_MANAGERS:
             results["customer_records"][manager] = {}
             results["flagged_customers"][manager] = {}
