@@ -106,3 +106,8 @@ TTC_EMAIL_LABELS = {
     "Keith Taggart": "TTC National Accounts",
     "TJ Atwood": "TTC West",
 }
+
+# Names whose email is NOT First.Last@loves.com. Key = full name exactly as it appears in the alignment file.
+EMAIL_OVERRIDES = {
+    "Peter Ungaro": "pete.ungaro@loves.com",
+}
