@@ -88,3 +88,21 @@ TTC_WEEK_COUNT = 13
 TTC_ALERT_THRESHOLDS = {"Tires": 15, "PM": 5, "TCE Spend per Truck": 500, "Labor Hrs": 10}
 
 TTC_MONTHLY_TAB_BY_MANAGER = {"Keith Taggart": "National", "Brett Moody": "East", "TJ Atwood": "West"}
+
+# ── Email automation (Phase 1: generate JSON files for Power Automate) ─────────
+EMAIL_DOMAIN = "loves.com"                 # addresses are built as First.Last@loves.com
+EMAIL_EXCLUDED_REGIONS = {"9"}             # Region 9 ("Other Programs") never gets an email
+EMAIL_SIGNOFF = "Thank you,"
+EMAIL_MODEL = "claude-opus-4-6"
+EMAIL_MAX_WORKERS = 4                      # simultaneous Claude calls while generating briefs
+EMAIL_MAX_TOKENS = MAX_TOKENS
+
+# Used ONLY for the cost estimate shown before generating. Verify against your Anthropic Console.
+PRICE_INPUT_PER_MTOK = 5.0                 # USD per million input tokens
+PRICE_OUTPUT_PER_MTOK = 25.0               # USD per million output tokens
+
+TTC_EMAIL_LABELS = {
+    "Brett Moody": "TTC East",
+    "Keith Taggart": "TTC National Accounts",
+    "TJ Atwood": "TTC West",
+}
