@@ -1,7 +1,7 @@
 import os
 import re
 import openpyxl
-from config import EMAIL_DOMAIN
+from config import EMAIL_DOMAIN, EMAIL_OVERRIDES
 
 
 def region_key(value):
@@ -38,6 +38,10 @@ def first_name(full_name):
 
 def make_email(full_name):
     """First.Last@loves.com from a full name. Returns None if a first and last name can't be found."""
+    key = " ".join(str(full_name or "").split()).lower()
+    for name, addr in EMAIL_OVERRIDES.items():
+        if " ".join(name.split()).lower() == key:
+            return addr
     cleaned = re.sub(r"[^A-Za-z\-\s]", "", str(full_name or ""))
     parts = cleaned.split()
     if len(parts) < 2:
