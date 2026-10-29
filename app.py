@@ -162,6 +162,12 @@ from analyzer import analyze_reports
 from monthly_analyzer import analyze_monthly_report
 from ttc_analyzer import analyze_ttc_reports
 from ttc_prompt import build_ttc_prompt
+from fuel_prompt import build_claude_prompt, fmt_pct, fmt_num
+from alignment import parse_alignment, find_saved_alignment
+from email_builder import (
+    build_fuel_items, build_ttc_items, estimate_cost, actual_cost,
+    generate_all, finalize_item, package_zip, _safe_date,
+)
 from config import METRIC_UNITS, MAX_TOKENS, INSIDE_SALES_REGIONS, TTC_MANAGER_DISPLAY, INSIDE_EAST_REGIONS, INSIDE_WEST_REGIONS
 
 # ── API Key ─────────────────────────────────────────────────────────────────────
@@ -172,32 +178,22 @@ def get_api_key():
         from config import ANTHROPIC_API_KEY
         return ANTHROPIC_API_KEY
 
-# ── Formatting helpers ──────────────────────────────────────────────────────────
-def fmt_pct(val):
-    if val is None:
-        return "N/A"
-    sign = "+" if val > 0 else ""
-    return f"{sign}{val:.1f}%"
+def show_df(df):
+    """st.dataframe that works on both older and newer Streamlit versions."""
+    try:
+        st.dataframe(df, width="stretch", hide_index=True)
+    except Exception:
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
-def fmt_num(val, unit=""):
-    if val is None:
-        return "N/A"
-    if unit == "$":
-        return f"${val:,.2f}"
-    return f"{val:,.0f}{' ' + unit if unit else ''}"
 
-def is_inside_sales(region):
-    return str(region).split(".")[0] in INSIDE_SALES_REGIONS
+def show_html_preview(page_html, height=700):
+    """Render an email preview. The HTML is built by email_builder with every piece of text escaped."""
+    if hasattr(st, "iframe"):
+        st.iframe(page_html, height=height)
+    else:
+        import streamlit.components.v1 as components
+        components.html(page_html, height=height, scrolling=True)
 
-def gal_tier(vol_change):
-    abs_vol = abs(vol_change)
-    if abs_vol >= 1500:
-        return "Tier 1 (1,500+ GAL Lost)"
-    elif abs_vol >= 500:
-        return "Tier 2 (500-1,499 GAL Lost)"
-    elif abs_vol >= 100:
-        return "Tier 3 (100-499 GAL Lost)"
-    return None
 
 def get_filterable_regions(results):
     regions = set()
@@ -251,252 +247,6 @@ def filter_results_by_region_group(results, region_set):
         "errors": [],
     }
 
-
-# ── Prompt builders ─────────────────────────────────────────────────────────────
-def md_table(headers, rows):
-    if not rows:
-        return "No alerts this period."
-    out = ["| " + " | ".join(headers) + " |"]
-    out.append("|" + "|".join(["---"] * len(headers)) + "|")
-    for row in rows:
-        out.append("| " + " | ".join(str(c) for c in row) + " |")
-    return "\n".join(out)
-
-
-def build_claude_prompt(results):
-    date = results.get("report_date", "Unknown")
-    lines = []
-    lines.append(f"FLEET SALES REPORT — Period Ending {date}")
-    lines.append("=" * 60)
-
-    table_map = {}
-
-    fleet_total_row = next((r for r in results["region_summary"] if r["label"] == "Fleet Hierarchy"), None)
-    fleet_total_line = ""
-    if fleet_total_row and fleet_total_row["current_week"]:
-        fleet_total_line = f"FLEET-WIDE TOTAL FUEL VOLUME (use this exact figure for any total-fleet-volume statement, do not recompute): {fmt_num(fleet_total_row['current_week'], 'GAL')}, WoW: {fmt_pct(fleet_total_row['wow_pct'])}"
-    lines.append(f"\n{fleet_total_line}" if fleet_total_line else "\nFLEET-WIDE TOTAL: not available (no Region report data for this figure).")
-
-    valid_regions = [
-        r for r in results["region_summary"]
-        if r["label"] and r["label"].startswith("Sales Region")
-        and r["current_week"] is not None and r["wow_pct"] is not None
-    ]
-    seen_labels = set()
-    distinct_regions = []
-    for r in valid_regions:
-        if r["label"] not in seen_labels:
-            seen_labels.add(r["label"])
-            distinct_regions.append(r)
-
-    has_region_data = bool(distinct_regions)
-    if has_region_data:
-        ranked = sorted(distinct_regions, key=lambda x: x["wow_pct"], reverse=True)
-        top3 = ranked[:3]
-        bottom3 = list(reversed(ranked[-3:])) if len(ranked) >= 3 else list(reversed(ranked))
-        table_map["%%TOP3_TABLE%%"] = md_table(
-            ["Rank", "Region", "Rep", "Current Volume", "WoW Change", "vs. 13Wk Avg"],
-            [[i + 1, r["label"], r["salesperson"] or "N/A", fmt_num(r["current_week"], "GAL"), fmt_pct(r["wow_pct"]), fmt_pct(r["curr_ov_avg"])] for i, r in enumerate(top3)]
-        )
-        table_map["%%BOTTOM3_TABLE%%"] = md_table(
-            ["Rank", "Region", "Rep", "Current Volume", "WoW Change", "vs. 13Wk Avg"],
-            [[i + 1, r["label"], r["salesperson"] or "N/A", fmt_num(r["current_week"], "GAL"), fmt_pct(r["wow_pct"]), fmt_pct(r["curr_ov_avg"])] for i, r in enumerate(bottom3)]
-        )
-        lines.append(f"\nFor context only (do not use to build a table yourself): {len(distinct_regions)} distinct regions have region-level data this period.")
-    else:
-        lines.append("\nNo region-level totals were provided in the source data this period (customer-only upload) -- there is no Top 3 / Bottom 3 regional table this period.")
-
-    regular_main = [a for a in results["fuel_main_alerts"] if not is_inside_sales(a["region"])]
-    inside_main = [a for a in results["fuel_main_alerts"] if is_inside_sales(a["region"])]
-    regular_secondary = [a for a in results["fuel_secondary"] if not is_inside_sales(a["region"])]
-    inside_secondary = [a for a in results["fuel_secondary"] if is_inside_sales(a["region"])]
-
-    all_accounts_for_scope = (
-        results["fuel_main_alerts"] + results["fuel_secondary"]
-        + results["fuel_increases"] + results["fuel_newly_dark"]
-    )
-    has_regular = any(not is_inside_sales(a["region"]) for a in all_accounts_for_scope)
-    has_inside = any(is_inside_sales(a["region"]) for a in all_accounts_for_scope)
-
-    dec_headers = ["Account", "Region", "Rep", "Area Manager", "This Week", "Prior Week", "WoW Change", "Vol Change"]
-
-    def dec_row(a):
-        return [a["customer"], a["region"], a["salesperson"] or "N/A", a["area_manager"] or "N/A",
-                fmt_num(a["current_week"], "GAL"), fmt_num(a["prior_week"], "GAL"),
-                fmt_pct(a["wow_pct"]), fmt_num(a["vol_change"], "GAL")]
-
-    if has_regular:
-        regular_all = regular_main + regular_secondary
-        b2030 = sorted([a for a in regular_all if a["bucket"] == "20-30% Decrease"], key=lambda x: x["vol_change"])
-        b1020 = sorted([a for a in regular_all if a["bucket"] == "10-20% Decrease"], key=lambda x: x["vol_change"])
-        b010 = sorted([a for a in regular_all if a["bucket"] == "0-10% Decrease"], key=lambda x: x["vol_change"])
-        table_map["%%REG_DEC_2030%%"] = md_table(dec_headers, [dec_row(a) for a in b2030])
-        table_map["%%REG_DEC_1020%%"] = md_table(dec_headers, [dec_row(a) for a in b1020])
-        table_map["%%REG_DEC_010%%"] = md_table(dec_headers, [dec_row(a) for a in b010])
-        lines.append(f"\nFor context only: {len(b2030)} regular-region accounts in 20-30% decrease, {len(b1020)} in 10-20%, {len(b010)} in 0-10%.")
-
-    if has_inside:
-        inside_tiered = []
-        for a in inside_main + inside_secondary:
-            tier = gal_tier(a["vol_change"])
-            if tier is None:
-                continue
-            a_copy = dict(a)
-            a_copy["gal_tier"] = tier
-            inside_tiered.append(a_copy)
-        t1 = sorted([a for a in inside_tiered if a["gal_tier"].startswith("Tier 1")], key=lambda x: x["vol_change"])
-        t2 = sorted([a for a in inside_tiered if a["gal_tier"].startswith("Tier 2")], key=lambda x: x["vol_change"])
-        t3 = sorted([a for a in inside_tiered if a["gal_tier"].startswith("Tier 3")], key=lambda x: x["vol_change"])
-        inside_dec_headers = ["Account", "Region", "Rep", "Area Manager", "This Week", "Prior Week", "Vol Change"]
-
-        def inside_dec_row(a):
-            return [a["customer"], a["region"], a["salesperson"] or "N/A", a["area_manager"] or "N/A",
-                    fmt_num(a["current_week"], "GAL"), fmt_num(a["prior_week"], "GAL"),
-                    fmt_num(a["vol_change"], "GAL")]
-
-        table_map["%%INS_DEC_T1%%"] = md_table(inside_dec_headers, [inside_dec_row(a) for a in t1])
-        table_map["%%INS_DEC_T2%%"] = md_table(inside_dec_headers, [inside_dec_row(a) for a in t2])
-        table_map["%%INS_DEC_T3%%"] = md_table(inside_dec_headers, [inside_dec_row(a) for a in t3])
-        lines.append(f"\nFor context only: {len(t1)} Inside Sales accounts in Tier 1, {len(t2)} in Tier 2, {len(t3)} in Tier 3.")
-
-    table_map["%%DARK_TABLE%%"] = md_table(
-        ["Account", "Region", "Rep", "Area Manager", "13Wk Avg", "This Week", "Last Known Volume"],
-        [[a['customer'], a['region'], a['salesperson'] or 'N/A', a['area_manager'] or 'N/A', fmt_num(a['avg_13wk'], 'GAL'), '0 GAL', fmt_num(a['last_known_vol'], 'GAL')] for a in results['fuel_newly_dark']]
-    )
-    lines.append(f"\nFor context only: {len(results['fuel_newly_dark'])} newly dark accounts this period.")
-    for a in results["fuel_newly_dark"]:
-        lines.append(f"  DARK: {a['customer']} | Region: {a['region']} | Rep: {a['salesperson'] or 'N/A'} | 13Wk Avg: {fmt_num(a['avg_13wk'], 'GAL')} | Last Known: {fmt_num(a['last_known_vol'], 'GAL')}")
-
-    regular_increases = sorted([a for a in results["fuel_increases"] if not is_inside_sales(a["region"])], key=lambda x: x["vol_change"], reverse=True)
-    inside_increases = sorted([a for a in results["fuel_increases"] if is_inside_sales(a["region"])], key=lambda x: x["vol_change"], reverse=True)
-
-    if has_regular:
-        def inc_row(a):
-            wow_display = "N/A (returning from near-zero)" if a.get("suppress_pct") else fmt_pct(a['wow_pct'])
-            return [a["customer"], a["region"], a["salesperson"] or "N/A",
-                    fmt_num(a["current_week"], "GAL"), fmt_num(a["prior_week"], "GAL"),
-                    wow_display, fmt_num(a["vol_change"], "GAL")]
-        table_map["%%REG_INC_TABLE%%"] = md_table(['Account', 'Region', 'Rep', 'This Week', 'Prior Week', 'WoW Change', 'Vol Gained'], [inc_row(a) for a in regular_increases])
-        lines.append(f"\nFor context only: {len(regular_increases)} regular-region fuel increase accounts.")
-        for a in regular_increases:
-            lines.append(f"  INCREASE (regular): {a['customer']} | Region: {a['region']} | Rep: {a['salesperson'] or 'N/A'} | Vol gained: {fmt_num(a['vol_change'], 'GAL')}")
-
-    if has_inside:
-        def inc_row_inside(a):
-            return [a["customer"], a["region"], a["salesperson"] or "N/A",
-                    fmt_num(a["current_week"], "GAL"), fmt_num(a["prior_week"], "GAL"),
-                    fmt_num(a["vol_change"], "GAL")]
-        table_map["%%INS_INC_TABLE%%"] = md_table(['Account', 'Region', 'Rep', 'This Week', 'Prior Week', 'Vol Gained'], [inc_row_inside(a) for a in inside_increases])
-        lines.append(f"\nFor context only: {len(inside_increases)} Inside Sales fuel increase accounts.")
-        for a in inside_increases:
-            lines.append(f"  INCREASE (inside sales): {a['customer']} | Region: {a['region']} | Rep: {a['salesperson'] or 'N/A'} | Vol gained: {fmt_num(a['vol_change'], 'GAL')}")
-
-    for metric, alerts in results["non_fuel_alerts"].items():
-        unit = METRIC_UNITS.get(metric, "")
-        lines.append(f"\n{metric.upper()} ALERTS (significant unit change, use PLAIN TEXT numbers only, no backticks, no code formatting): {len(alerts)} flagged")
-        for a in alerts[:15]:
-            lines.append(
-                f"  [{a['direction'].upper()}] {a['customer']} | "
-                f"Rep: {a['salesperson'] or 'N/A'} | "
-                f"Current: {fmt_num(a['current_week'], unit)} | "
-                f"Prior: {fmt_num(a['prior_week'], unit)} | "
-                f"Change: {fmt_num(int(a['current_week'] - a['prior_week']), unit)}"
-            )
-    if results["errors"]:
-        lines.append("\nERRORS DURING PROCESSING:")
-        for e in results["errors"]:
-            lines.append(f"  {e}")
-    prompt = "\n".join(lines)
-
-    if has_regular and has_inside:
-        section_4_scope = "This upload contains BOTH regular regions and Inside Sales regions."
-        section_4_headings = "### Regular Regions\n#### 20-30% Decrease\nOn its own line, output exactly: %%REG_DEC_2030%%\n#### 10-20% Decrease\nOn its own line, output exactly: %%REG_DEC_1020%%\n#### 0-10% Decrease\nOn its own line, output exactly: %%REG_DEC_010%%\n\n### Inside Sales Regions\n#### Tier 1 — 1,500+ GAL Lost\nOn its own line, output exactly: %%INS_DEC_T1%%\n#### Tier 2 — 500-1,499 GAL Lost\nOn its own line, output exactly: %%INS_DEC_T2%%\n#### Tier 3 — 100-499 GAL Lost\nOn its own line, output exactly: %%INS_DEC_T3%%"
-    elif has_inside:
-        section_4_scope = "This upload contains ONLY Inside Sales regions. Do not create a 'Regular Regions' heading."
-        section_4_headings = "#### Tier 1 — 1,500+ GAL Lost\nOn its own line, output exactly: %%INS_DEC_T1%%\n#### Tier 2 — 500-1,499 GAL Lost\nOn its own line, output exactly: %%INS_DEC_T2%%\n#### Tier 3 — 100-499 GAL Lost\nOn its own line, output exactly: %%INS_DEC_T3%%"
-    else:
-        section_4_scope = "This upload contains ONLY regular regions. Do not create an 'Inside Sales Regions' heading."
-        section_4_headings = "#### 20-30% Decrease\nOn its own line, output exactly: %%REG_DEC_2030%%\n#### 10-20% Decrease\nOn its own line, output exactly: %%REG_DEC_1020%%\n#### 0-10% Decrease\nOn its own line, output exactly: %%REG_DEC_010%%"
-
-    if has_regular and has_inside:
-        section_5_headings = "### Regular Regions\nOn its own line, output exactly: %%REG_INC_TABLE%%\n\n### Inside Sales Regions\nOn its own line, output exactly: %%INS_INC_TABLE%%"
-    elif has_inside:
-        section_5_headings = "On its own line, output exactly: %%INS_INC_TABLE%%\nDo not create a 'Regular Regions' heading."
-    else:
-        section_5_headings = "On its own line, output exactly: %%REG_INC_TABLE%%\nDo not create an 'Inside Sales Regions' heading."
-
-    top3_instruction = "On its own line, output exactly: %%TOP3_TABLE%%" if has_region_data else "No table this period -- write 1-2 sentences instead, based on the account-level context above, making clear region-level totals were not available."
-    bottom3_instruction = "On its own line, output exactly: %%BOTTOM3_TABLE%%" if has_region_data else "No table this period -- skip straight to 2-3 bullets using account-level data, do not repeat the Top 3 note."
-
-    prompt += f"""
-
----
-INSTRUCTIONS:
-You are the Fleet Sales Intelligence Agent for Love's Travel Stops fleet sales team. Generate a professional executive insight summary for SVP-level leadership.
-
-ABSOLUTE RULE ON TABLES -- READ CAREFULLY: You do not have the ability to build correct tables yourself in this report, and you must not try. Every place a table belongs, this document tells you to output one exact placeholder token (formatted like %%SOMETHING%%) on its own line, by itself, with nothing else on that line -- no table, no pipes, no dashes, no columns, nothing you compose yourself. That token will be swapped for the real table automatically after you respond. If you write anything other than the bare token on that line -- including a table you construct yourself, extra columns, or a percentage -- it will be visibly wrong in the final report and it will be your error. The "for context only" data given to you elsewhere in this prompt is for writing your bullet commentary ONLY -- never use it to build a table, and never use it to calculate a percentage for any Inside Sales account under any circumstances, even though you can see the numbers to do so.
-
-TONE AND STYLE:
-- Write as a senior analyst. Direct, confident, factual.
-- Present information as observations and insights -- not directives or prescriptions.
-- Never tell leadership what to do or how to respond. Surface the data and let them draw conclusions.
-- Never call out gaps, failures, or accountability issues. State facts neutrally.
-- Never write: "it is worth noting", "as we can see", "it appears that", "please note", "requires immediate action", "should follow up", "accountability gap"
-- State decreases plainly: "down 21.4% week-over-week"
-- Frame increases as signals: "up 18% -- strongest week in the 13-week window"
-- Numbers must always include units (GAL, EA, $, Hrs)
-- Reference area manager alongside salesperson when available
-- Keep sections tight -- no extra blank lines between sections, no padding
-- Minimize bold formatting. Use bold only for section headers, never for account names, rep names, metrics, or numbers in the text.
-- Never use backticks or code formatting anywhere in your response, for any reason, under any circumstances.
-
-OUTPUT FORMAT -- follow this exact order:
-
-## FLEET SALES INTELLIGENCE BRIEF
-**Period Ending: [DATE]**
-
-## 1. OPENING
-2-3 bullet points. Total fuel volume vs. rolling average (use the FLEET-WIDE TOTAL figure given above verbatim, do not recompute it). Standout regional trend. National performance direction.
-
-## 2. REGIONAL HIGHLIGHTS
-### Top 3 Performing Regions
-{top3_instruction}
-After (table token or sentences): 2-3 bullets with context on what's driving each region's performance.
-
-### Bottom 3 Underperforming Regions
-{bottom3_instruction}
-After (table token or bullets): 2-3 bullets with context on which accounts are driving underperformance in each region.
-
-## 3. NEWLY DARK ACCOUNTS
-On its own line, output exactly: %%DARK_TABLE%%
-After table token: 2-3 bullets noting patterns in regions or reps with multiple dark accounts.
-
-## 4. FUEL DECREASE ALERTS
-{section_4_scope}
-{section_4_headings}
-After all table tokens above: 2-3 bullets noting rep or region concentration.
-
-## 5. FUEL INCREASES
-{section_5_headings}
-After table token(s): 2-3 bullets with top volume gainers.
-
-## 6. NON-FUEL HIGHLIGHTS
-For each metric (Tires, PM, TCE Spend per Truck, Labor Hours), 2-3 bullets covering steepest movers. Write all numbers as plain text, no backticks, no code formatting, single $ sign for dollar amounts (e.g. $1,750.00).
-
-## 7. KEY TAKEAWAYS
-3 bullets. Each names a specific account or rep, states a specific number, surfaces an observation.
-
-## 8. CLOSING
-One sentence. Factual only.
-
-DATA CONTEXT:
-- Main accounts: 13-week average >= 10,000 GAL and current week >= 5,000 GAL
-- Secondary accounts: below those thresholds
-- Newly dark: accounts with 13-week avg >= 1,000 GAL reporting zero this period
-- Accounts moving more than 30% in either direction are intentionally excluded -- those are covered by a separate fleet exception report.
-- Never fabricate data.
-"""
-    return prompt, table_map
 
 def build_monthly_prompt(results):
     period = results.get("period", "Unknown")
@@ -629,6 +379,10 @@ if "ttc_selected_view" not in st.session_state:
     st.session_state.ttc_selected_view = "Overall (All Managers)"
 if "ttc_analyses" not in st.session_state:
     st.session_state.ttc_analyses = {}
+if "email_plan" not in st.session_state:
+    st.session_state.email_plan = None
+if "email_outputs" not in st.session_state:
+    st.session_state.email_outputs = {}
 
 # ── Upload UI ───────────────────────────────────────────────────────────────────
 if st.session_state.mode is None:
@@ -636,7 +390,7 @@ if st.session_state.mode is None:
     st.markdown("## Fleet Intelligence for Love's Sales Team")
     st.markdown("Choose an analysis type, upload your report, and get an executive-ready insight summary in seconds.")
 
-    tab_weekly, tab_monthly, tab_ttc = st.tabs(["Weekly Analysis", "Monthly Analysis", "Truck Care Analysis"])
+    tab_weekly, tab_monthly, tab_ttc, tab_email = st.tabs(["Weekly Analysis", "Monthly Analysis", "Truck Care Analysis", "Email Automation"])
 
     with tab_weekly:
         st.markdown("#### Upload Reports")
@@ -829,6 +583,194 @@ if st.session_state.mode is None:
                             os.unlink(p)
                         except Exception:
                             pass
+
+    with tab_email:
+        st.markdown("#### Build Emails")
+        st.markdown("Upload the weekly reports and the Region Alignments file. You will see every recipient and subject line before any brief is generated. Nothing is emailed from this page -- it produces files for the Power Automate flow.")
+        col1, col2 = st.columns(2)
+        with col1:
+            em_fuel_file = st.file_uploader("Fuel Customer Report", type=["xlsx", "xls"], key="em_fuel_upload", help="13 Week Trend Report by Customer (fuel)")
+        with col2:
+            em_align_file = st.file_uploader("Region Alignments (optional)", type=["xlsx", "xls"], key="em_align_upload", help="Only needed when the alignments changed. Otherwise the copy saved with the app is used.")
+            try:
+                saved_alignment_path = find_saved_alignment(os.path.dirname(os.path.abspath(__file__)))
+                saved_alignment_error = None
+            except ValueError as ex:
+                saved_alignment_path, saved_alignment_error = None, str(ex)
+            if em_align_file is not None:
+                st.caption("Using the file you just uploaded for this run.")
+            elif saved_alignment_path:
+                st.caption(f"Using the saved alignment file: {os.path.basename(saved_alignment_path)}")
+            elif saved_alignment_error:
+                st.error(saved_alignment_error)
+            else:
+                st.warning("No saved alignment file found. Upload one, or save Region_Alignments.xlsx in the GitHub repo.")
+        st.markdown("**Truck Care (optional)** -- upload both Truck Care reports to include the three TTC manager emails.")
+        col3, col4 = st.columns(2)
+        with col3:
+            em_ttc_customer_file = st.file_uploader("Customer Report (TTC)", type=["xlsx", "xls"], key="em_ttc_customer_upload")
+        with col4:
+            em_ttc_region_file = st.file_uploader("Region Report (TTC)", type=["xlsx", "xls"], key="em_ttc_region_upload")
+        em_ttc_monthly_file = st.file_uploader("Monthly Sales Report (optional)", type=["xlsx", "xls"], key="em_ttc_monthly_upload")
+
+        ttc_pair_ok = (em_ttc_customer_file is None) == (em_ttc_region_file is None)
+        if not ttc_pair_ok:
+            st.warning("Upload both Truck Care reports (Customer and Region), or neither.")
+        em_ready = em_fuel_file is not None and (em_align_file is not None or saved_alignment_path is not None) and ttc_pair_ok
+
+        if st.button("BUILD EMAIL PLAN", disabled=not em_ready, key="btn_email_plan"):
+            em_paths = []
+
+            def save_upload(f):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tf:
+                    tf.write(f.read())
+                    em_paths.append(tf.name)
+                    return tf.name
+
+            try:
+                with st.spinner("Building the email plan... (no AI calls are made in this step)"):
+                    fuel_path = save_upload(em_fuel_file)
+                    align_path = save_upload(em_align_file) if em_align_file is not None else saved_alignment_path
+                    fuel_results = analyze_reports(fuel_path, None)
+                    if fuel_results["errors"]:
+                        raise ValueError("; ".join(fuel_results["errors"]))
+                    alignment = parse_alignment(align_path)
+                    plan_items, plan_skipped = build_fuel_items(fuel_results, alignment)
+                    plan_date = fuel_results["report_date"] or "Unknown"
+
+                    if em_ttc_customer_file is not None and em_ttc_region_file is not None:
+                        ttc_c_path = save_upload(em_ttc_customer_file)
+                        ttc_r_path = save_upload(em_ttc_region_file)
+                        ttc_m_path = save_upload(em_ttc_monthly_file) if em_ttc_monthly_file else None
+                        ttc_email_results = analyze_ttc_reports(ttc_c_path, ttc_r_path, ttc_m_path)
+                        if ttc_email_results["errors"]:
+                            raise ValueError("; ".join(ttc_email_results["errors"]))
+                        plan_items += build_ttc_items(ttc_email_results, ttc_email_results.get("report_date") or plan_date)
+
+                st.session_state.email_plan = {"items": plan_items, "skipped": plan_skipped, "report_date": plan_date}
+                st.session_state.email_outputs = {}
+                st.session_state.mode = "emails"
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Could not build the email plan: {str(e)}")
+            finally:
+                for p in em_paths:
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
+
+# ── Email automation UI ─────────────────────────────────────────────────────────
+elif st.session_state.mode == "emails":
+    import pandas as pd
+
+    plan = st.session_state.email_plan
+    em_items = plan["items"]
+    em_skipped = plan["skipped"]
+    em_date = plan["report_date"]
+
+    col_title, col_btn = st.columns([4, 1])
+    with col_title:
+        st.markdown(
+            f'<div class="results-title">Email <span>Automation</span> &nbsp;<small style="font-size:13px;color:#666;font-family:\'DM Mono\',monospace;font-weight:400;">Period {em_date}</small></div>',
+            unsafe_allow_html=True,
+        )
+    with col_btn:
+        if st.button("Start Over", key="btn_email_back"):
+            st.session_state.mode = None
+            st.session_state.email_plan = None
+            st.session_state.email_outputs = {}
+            st.rerun()
+    st.markdown("<hr style='border:none;border-top:3px solid #d90d0d;margin:8px 0 20px 0;'>", unsafe_allow_html=True)
+
+    est = estimate_cost(em_items)
+    n_warn = sum(1 for i in em_items if i["warnings"])
+    st.markdown(f"""
+    <div class="stat-row">
+        <div class="stat-card"><div class="stat-value">{len(em_items)}</div><div class="stat-label">Emails Planned</div></div>
+        <div class="stat-card"><div class="stat-value">{len(em_skipped)}</div><div class="stat-label">Skipped</div></div>
+        <div class="stat-card warning"><div class="stat-value">{n_warn}</div><div class="stat-label">With Notes</div></div>
+        <div class="stat-card"><div class="stat-value">${est['typical']:.2f}</div><div class="stat-label">Est. Cost (up to ${est['high']:.2f})</div></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("##### Recipients (review before generating)")
+    show_df(pd.DataFrame([{
+        "Email": i["label"],
+        "To": i["to"] or "—",
+        "CC": "; ".join(i["cc"]) or "—",
+        "Subject": i["subject"],
+        "Flagged accounts": i["flagged"],
+        "Notes": "; ".join(i["warnings"]) or "—",
+    } for i in em_items]))
+
+    if em_skipped:
+        with st.expander(f"Not emailed ({len(em_skipped)})"):
+            show_df(pd.DataFrame([{"Email": s_["email"], "Reason": s_["reason"]} for s_ in em_skipped]))
+
+    st.markdown("##### Test mode")
+    test_mode = st.checkbox("Address every email to me instead of the real recipients (subject gets a [TEST] prefix)", value=True, key="em_test_mode")
+    test_address = None
+    if test_mode:
+        typed = st.text_input("Send test emails to", key="em_test_address", placeholder="firstname.lastname@loves.com").strip()
+        if "@" in typed and "." in typed.split("@")[-1]:
+            test_address = typed
+        else:
+            st.info("Enter your email address to package test files.")
+    else:
+        st.warning("LIVE MODE: the files you download will email the real reps and Area Managers once they land in the SharePoint folder.")
+
+    st.markdown("##### Generate briefs")
+    st.caption(f"Makes {len(em_items)} Claude calls (about {est['input_tokens']:,} input tokens in total). Estimated cost ${est['typical']:.2f}, up to about ${est['high']:.2f}. Takes a few minutes.")
+    if st.button("GENERATE BRIEFS", key="btn_generate_briefs"):
+        try:
+            gen_client = anthropic.Anthropic(
+                api_key=get_api_key(),
+                http_client=httpx2.Client(verify=False)
+            )
+            bar = st.progress(0.0, text="Starting...")
+
+            def on_progress(done, total, label):
+                bar.progress(done / total, text=f"{done} of {total} done (latest: {label})")
+
+            st.session_state.email_outputs = generate_all(em_items, gen_client, on_progress)
+            bar.empty()
+        except Exception as e:
+            st.error(f"Generation failed: {str(e)}")
+
+    em_outputs = st.session_state.email_outputs
+    if em_outputs:
+        ok_ids = [i["id"] for i in em_items if em_outputs.get(i["id"], {}).get("status") == "ok"]
+        bad = [i for i in em_items if i["id"] not in ok_ids]
+        used_in = sum(o["in_tokens"] for o in em_outputs.values())
+        used_out = sum(o["out_tokens"] for o in em_outputs.values())
+        st.success(f"{len(ok_ids)} of {len(em_items)} briefs generated. Actual cost: ${actual_cost(used_in, used_out):.2f} ({used_in:,} in / {used_out:,} out tokens).")
+        for i in bad:
+            st.error(f"{i['label']}: " + "; ".join(em_outputs.get(i["id"], {}).get("warnings", ["not generated"])))
+        for i in em_items:
+            w = em_outputs.get(i["id"], {}).get("warnings", []) if i["id"] in ok_ids else []
+            if w:
+                st.warning(f"{i['label']}: " + "; ".join(w))
+
+        if test_mode and not test_address:
+            st.info("Enter your test address above to package the files.")
+        elif ok_ids:
+            zip_bytes = package_zip(em_items, em_outputs, em_skipped, em_date, test_address)
+            st.download_button(
+                label="Download send-ready ZIP",
+                data=zip_bytes,
+                file_name=f"fleet_emails_{_safe_date(em_date)}{'_TEST' if test_mode else ''}.zip",
+                mime="application/zip",
+                key="download_email_zip",
+            )
+            st.caption("Upload ONLY the .json files from the 'send' folder to the SharePoint folder your flow watches. The 'preview' folder is for you to open in a browser.")
+
+            ok_items = [i for i in em_items if i["id"] in ok_ids]
+            pick = st.selectbox("Preview an email", [i["label"] for i in ok_items], key="em_preview_pick")
+            chosen = next(i for i in ok_items if i["label"] == pick)
+            payload = finalize_item(chosen, em_outputs[chosen["id"]], em_date, test_address)
+            show_html_preview(payload["_preview"])
 
 # ── Results UI ──────────────────────────────────────────────────────────────────
 else:
