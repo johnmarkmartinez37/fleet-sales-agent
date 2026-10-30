@@ -270,7 +270,7 @@ def ttc_fleet_table(rr):
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fuel tables
 # ═══════════════════════════════════════════════════════════════════════════════
-def headline_table(t):
+def headline_table(t, scope=None):
     rows = [
         ["This week vs. prior week", fmt_plain(t["current"], "GAL"), fmt_plain(t["prior"], "GAL"),
          fmt_signed(t["wow"], "GAL"), pct(t["wow"], t["prior"])],
@@ -281,7 +281,7 @@ def headline_table(t):
         ["13-week average vs. last year's 13-week average", fmt_plain(t["avg"], "GAL"), fmt_plain(t["ly_avg"], "GAL"),
          fmt_signed(t["avg_yoy"], "GAL"), pct(t["avg_yoy"], t["ly_avg"])],
     ]
-    return md_table(["Measure", "Current", "Comparison", "Change (GAL)", "Change (%)"], rows)
+    return md_table([f"Measure ({scope})" if scope else "Measure", "Current", "Comparison", "Change (GAL)", "Change (%)"], rows)
 
 
 def group_map(alignment):
@@ -694,7 +694,7 @@ def build_vp_prompt(label, groups, ttc_managers, recipients, accts, alignment, r
         t = totals(scope_accts)
         group_ctx_src = [(g, totals([a for a in scope_accts if gmap.get(a["region"]) == g])) for g in groups]
         recs = [r for r in region_rollups(scope_accts, alignment) if r["t"]["ly"] > 0]
-    gtable = md_table(GROUP_HEADERS, [group_row(g, gt) for g, gt in group_ctx_src] + [group_row("**Total**", t)])
+    gtable = md_table(GROUP_HEADERS, [group_row(g, gt) for g, gt in group_ctx_src] + [group_row(f"**Total ({' + '.join(groups)})**", t)])
     ranked = sorted(recs, key=lambda r: r["t"]["yoy"], reverse=True)
     up = [r for r in ranked if r["t"]["yoy"] > 0][:5]
     down = [r for r in reversed(ranked) if r["t"]["yoy"] < 0][:5]
@@ -705,7 +705,7 @@ def build_vp_prompt(label, groups, ttc_managers, recipients, accts, alignment, r
     inc = pick_increases(list_accts, n, exclude_30=EXEC_EXCLUDE_30PCT_MOVES)
 
     table_map = {
-        "%%VP_HEADLINE%%": headline_table(t),
+        "%%VP_HEADLINE%%": headline_table(t, " + ".join(groups)),
         "%%VP_GROUP_TABLE%%": gtable,
         "%%VP_REGION_UP%%": md_table(REGION_HEADERS, region_rows(up)),
         "%%VP_REGION_DOWN%%": md_table(REGION_HEADERS, region_rows(down)),
@@ -815,7 +815,7 @@ def build_manager_prompt(label, groups, managers, accts, alignment, report_date,
     inc = pick_increases(accts, n)
 
     table_map = {
-        "%%MGR_HEADLINE%%": headline_table(t),
+        "%%MGR_HEADLINE%%": headline_table(t, " + ".join(groups)),
         "%%MGR_REGIONS%%": md_table(REGION_HEADERS, region_rows(recs)),
         "%%MGR_DEC%%": md_table(CHANGE_HEADERS, change_rows(dec)),
         "%%MGR_DARK%%": md_table(DARK_HEADERS, dark_rows(dark)),
