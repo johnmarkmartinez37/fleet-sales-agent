@@ -1,4 +1,4 @@
-"""Leadership emails: the executive summary and the Inside East / Inside West manager roll-ups.
+"""Leadership emails: the executive summary, the East / West VP summaries and the combined Inside Sales (Inside East + Inside West) brief.
 
 Every number and every table is computed here in Python from the 13-week customer report. Claude is only
 asked to write short commentary around bare %%TOKEN%% placeholders, exactly like the rep briefs.
@@ -14,7 +14,7 @@ from analyzer import safe_float, clean_field, find_last_known_value, NEWLY_DARK_
 from config import (
     CUSTOMER_COLS, CUSTOMER_DATA_START_ROW, FUEL_SHEET,
     TTC_METRIC_SHEETS, TTC_METRIC_UNITS, TTC_KNOWN_MANAGERS, TTC_EMAIL_LABELS,
-    EXEC_RECIPIENTS, EXEC_SUBJECT_LABEL, MANAGER_BRIEFS,
+    EXEC_RECIPIENTS, EXEC_SUBJECT_LABEL, MANAGER_BRIEFS, GROUP_MERGES, VP_BRIEFS,
     REGION_DATA_START_ROW, REGION_ROLLUPS,
     LEADERSHIP_TOP_N, MANAGER_TOP_N, EXEC_EXCLUDE_30PCT_MOVES, EXEC_TTC_EXCLUDE_30PCT_MOVES, EXEC_LIST_EXCLUDED_REGIONS,
 )
@@ -192,16 +192,45 @@ def totals_from_row(r):
             "vs_avg": cur - avg, "avg_yoy": avg - ly_avg, "ly_avg": ly_avg}
 
 
-def group_table_from_region(rr):
-    rows = []
+def _merged_name(g):
+    for new, members in GROUP_MERGES.items():
+        if g in members:
+            return new
+    return g
+
+
+def merge_region_rows(rows, label):
+    """Add several Region report rows (e.g. Inside East + Inside West) into one row."""
+    def s(k):
+        vals = [r[k] for r in rows if r.get(k) is not None]
+        return sum(vals) if vals else None
+    return {"label": label, "rep": None, "avg": s("avg"), "vs_avg_pct": None, "yoy": s("yoy"),
+            "current": s("current"), "prior": s("prior"), "yoy_dsl_avg": s("yoy_dsl_avg")}
+
+
+def merged_groups(rr):
+    """Group rows of the Region report, with GROUP_MERGES applied (Inside East + Inside West -> Inside Sales)."""
+    by = {}
     for g, r in rr["groups"].items():
-        t = totals_from_row(r)
-        rows.append([g, fmt_plain(t["current"], "GAL"), fmt_signed(t["wow"], "GAL"), pct(t["wow"], t["prior"]),
-                     fmt_signed(t["yoy"], "GAL"), pct(t["yoy"], t["ly"])])
-    t = totals_from_row(rr["fleet"]["Fuel"])
-    rows.append(["**Total**", fmt_plain(t["current"], "GAL"), fmt_signed(t["wow"], "GAL"), pct(t["wow"], t["prior"]),
-                 fmt_signed(t["yoy"], "GAL"), pct(t["yoy"], t["ly"])])
-    return md_table(["Group", "This Week", "WoW Change (GAL)", "WoW %", "YoY Change (GAL)", "YoY %"], rows)
+        by.setdefault(_merged_name(g), []).append(r)
+    return {name: (rows[0] if len(rows) == 1 and name == rows[0]["label"] else merge_region_rows(rows, name))
+            for name, rows in by.items()}
+
+
+GROUP_HEADERS = ["Group", "This Week", "WoW Change (GAL)", "WoW %", "vs 13Wk Avg %",
+                 "YoY vs Same Wk LY (GAL)", "YoY vs Same Wk LY %", "13Wk Avg YoY (GAL)", "13Wk Avg YoY %"]
+
+
+def group_row(label, t):
+    return [label, fmt_plain(t["current"], "GAL"), fmt_signed(t["wow"], "GAL"), pct(t["wow"], t["prior"]),
+            pct(t["vs_avg"], t["avg"]), fmt_signed(t["yoy"], "GAL"), pct(t["yoy"], t["ly"]),
+            fmt_signed(t["avg_yoy"], "GAL"), pct(t["avg_yoy"], t["ly_avg"])]
+
+
+def group_table_from_region(rr):
+    rows = [group_row(g, totals_from_row(r)) for g, r in merged_groups(rr).items()]
+    rows.append(group_row("**Total**", totals_from_row(rr["fleet"]["Fuel"])))
+    return md_table(GROUP_HEADERS, rows)
 
 
 def region_recs_from_region(rr, codes=None):
@@ -235,7 +264,7 @@ def ttc_fleet_table(rr):
         rows.append([sheet, fmt_plain(cur, unit), fmt_plain(ly, unit), fmt_signed(yoy, unit),
                      pct(r["yoy"], (r["current"] - r["yoy"]) if (r["current"] is not None and r["yoy"] is not None) else None),
                      fmt_plain(r["avg"], unit), "N/A" if v is None else f"{'+' if v > 0 else ''}{v:.1f}%"])
-    return md_table(["Metric", "This Week", "Same Week Last Year", "YoY Change", "YoY %", "13Wk Avg", "vs. 13Wk Avg"], rows), len(rows)
+    return md_table(["Metric", "This Week", "Same Week Last Year", "YoY vs Same Wk LY", "YoY vs Same Wk LY %", "13Wk Avg", "vs. 13Wk Avg"], rows), len(rows)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -268,19 +297,17 @@ def group_table(accts, alignment):
     gmap = group_map(alignment)
     buckets = {}
     for a in accts:
-        buckets.setdefault(gmap.get(a["region"], NOT_ALIGNED), []).append(a)
-    order = [g for g in alignment["groups"] if g in buckets]
+        buckets.setdefault(_merged_name(gmap.get(a["region"], NOT_ALIGNED)), []).append(a)
+    order = []
+    for g in alignment["groups"]:
+        n = _merged_name(g)
+        if n in buckets and n not in order:
+            order.append(n)
     if NOT_ALIGNED in buckets:
         order.append(NOT_ALIGNED)
-    rows = []
-    for g in order:
-        t = totals(buckets[g])
-        rows.append([g, fmt_plain(t["current"], "GAL"), fmt_signed(t["wow"], "GAL"), pct(t["wow"], t["prior"]),
-                     fmt_signed(t["yoy"], "GAL"), pct(t["yoy"], t["ly"])])
-    t = totals(accts)
-    rows.append(["**Total**", fmt_plain(t["current"], "GAL"), fmt_signed(t["wow"], "GAL"), pct(t["wow"], t["prior"]),
-                 fmt_signed(t["yoy"], "GAL"), pct(t["yoy"], t["ly"])])
-    return md_table(["Group", "This Week", "WoW Change (GAL)", "WoW %", "YoY Change (GAL)", "YoY %"], rows), buckets
+    rows = [group_row(g, totals(buckets[g])) for g in order]
+    rows.append(group_row("**Total**", totals(accts)))
+    return md_table(GROUP_HEADERS, rows), buckets
 
 
 def region_rollups(accts, alignment):
@@ -304,12 +331,14 @@ def region_rollups(accts, alignment):
 
 
 def region_rows(recs):
-    return [[f"Region {r['code']}", r["rep"], fmt_plain(r["t"]["current"], "GAL"),
-             fmt_signed(r["t"]["wow"], "GAL"), fmt_signed(r["t"]["yoy"], "GAL"), pct(r["t"]["yoy"], r["t"]["ly"])]
+    return [[f"Region {r['code']}", r["rep"], fmt_plain(r["t"]["current"], "GAL"), fmt_signed(r["t"]["wow"], "GAL"),
+             pct(r["t"]["vs_avg"], r["t"]["avg"]), fmt_signed(r["t"]["yoy"], "GAL"), pct(r["t"]["yoy"], r["t"]["ly"]),
+             fmt_signed(r["t"]["avg_yoy"], "GAL"), pct(r["t"]["avg_yoy"], r["t"]["ly_avg"])]
             for r in recs]
 
 
-REGION_HEADERS = ["Region", "Rep", "This Week", "WoW Change (GAL)", "YoY Change (GAL)", "YoY %"]
+REGION_HEADERS = ["Region", "Rep", "This Week", "WoW Change (GAL)", "vs 13Wk Avg %",
+                  "YoY vs Same Wk LY (GAL)", "YoY vs Same Wk LY %", "13Wk Avg YoY (GAL)", "13Wk Avg YoY %"]
 
 
 MOVE_CAP_PCT = 30.0
@@ -368,7 +397,7 @@ def pick_dark(accts, n):
     return out[:n]
 
 
-CHANGE_HEADERS = ["Account", "Region", "Rep", "This Week", "Prior Week", "WoW Change", "YoY Change"]
+CHANGE_HEADERS = ["Account", "Region", "Rep", "This Week", "Prior Week", "WoW Change", "YoY vs Same Wk LY"]
 
 
 def change_rows(lst):
@@ -376,7 +405,7 @@ def change_rows(lst):
              fmt_signed(a["chg"], "GAL"), fmt_signed(a["yoy_week"], "GAL")] for a in lst]
 
 
-DARK_HEADERS = ["Account", "Region", "Rep", "13Wk Avg", "This Week", "Last Known Volume", "YoY Change"]
+DARK_HEADERS = ["Account", "Region", "Rep", "13Wk Avg", "This Week", "Last Known Volume", "YoY vs Same Wk LY"]
 
 
 def dark_rows(lst):
@@ -390,9 +419,9 @@ def dark_rows(lst):
 TTC_TEAM = lambda m: TTC_EMAIL_LABELS.get(m, m)  # noqa: E731
 
 
-def ttc_summary_table(ttc_results):
+def ttc_summary_table(ttc_results, managers=None):
     rows = []
-    for m in TTC_KNOWN_MANAGERS:
+    for m in (managers or TTC_KNOWN_MANAGERS):
         for sheet in TTC_METRIC_SHEETS:
             r = ttc_results.get("manager_rollups", {}).get(m, {}).get(sheet)
             if not r:
@@ -402,10 +431,10 @@ def ttc_summary_table(ttc_results):
             vs_avg_txt = "N/A" if vs_avg is None else f"{'+' if vs_avg > 0 else ''}{vs_avg:.1f}%"
             rows.append([TTC_TEAM(m), sheet, fmt_plain(r["this_week"], unit), fmt_plain(r["avg_13wk"], unit),
                          vs_avg_txt, fmt_signed(r["yoy"], unit)])
-    return md_table(["Team", "Metric", "This Week", "13Wk Avg", "vs. 13Wk Avg", "YoY Change"], rows), len(rows)
+    return md_table(["Team", "Metric", "This Week", "13Wk Avg", "vs. 13Wk Avg", "YoY vs Same Wk LY"], rows), len(rows)
 
 
-def ttc_decline_lists(ttc_results, n, exclude_30=False):
+def ttc_decline_lists(ttc_results, n, exclude_30=False, managers=None):
     """Top-n biggest week-over-week declines per Truck Care metric, across all three teams.
     Tires / PM / Labor Hrs are counts, so a blank this week means zero. $ per truck is a ratio, so it needs both weeks.
     Customers with no activity at all in that metric (nothing this week, last week or on the 13-week average)
@@ -415,7 +444,7 @@ def ttc_decline_lists(ttc_results, n, exclude_30=False):
         unit = TTC_METRIC_UNITS.get(sheet, "")
         additive = sheet != "TCE Spend per Truck"
         merged = {}
-        for m in TTC_KNOWN_MANAGERS:
+        for m in (managers or TTC_KNOWN_MANAGERS):
             for rec in ttc_results.get("customer_records", {}).get(m, {}).get(sheet, []):
                 tw, pw = rec.get("this_week"), rec.get("prior_week")
                 if not ((rec.get("avg_13wk") or 0) > 0 or (tw or 0) > 0 or (pw or 0) > 0):
@@ -448,7 +477,7 @@ def ttc_decline_lists(ttc_results, n, exclude_30=False):
                  fmt_signed(v["delta"], unit), fmt_signed(v["yoy"], unit)] for v in lst]
         out[sheet] = {
             "unit": unit, "items": lst,
-            "table": md_table(["Account", "Team", "TTC Rep", "This Week", "Prior Week", "WoW Change", "YoY Change"], rows),
+            "table": md_table(["Account", "Team", "TTC Rep", "This Week", "Prior Week", "WoW Change", "YoY vs Same Wk LY"], rows),
         }
     return out
 
@@ -518,7 +547,7 @@ def build_exec_prompt(accts, alignment, report_date, ttc_results=None, region_re
     if region_report:
         t = totals_from_row(region_report["fleet"]["Fuel"])
         gtable = group_table_from_region(region_report)
-        group_ctx_src = [(g, totals_from_row(r)) for g, r in region_report["groups"].items()]
+        group_ctx_src = [(g, totals_from_row(r)) for g, r in merged_groups(region_report).items()]
         recs = [r for r in region_recs_from_region(region_report) if r["t"]["ly"] > 0]
     else:
         t = totals(accts)
@@ -550,12 +579,13 @@ def build_exec_prompt(accts, alignment, report_date, ttc_results=None, region_re
     lines += _ctx_list("FLEET FUEL HEADLINE (for context only)", _headline_ctx(t))
     group_ctx = []
     for g, gt in group_ctx_src:
-        group_ctx.append(f"{g}: this week {fmt_plain(gt['current'], 'GAL')} | YoY {fmt_signed(gt['yoy'], 'GAL')} ({pct(gt['yoy'], gt['ly'])}) | WoW {fmt_signed(gt['wow'], 'GAL')}")
+        group_ctx.append(f"{g}: this week {fmt_plain(gt['current'], 'GAL')} | YoY vs same week last year {fmt_signed(gt['yoy'], 'GAL')} ({pct(gt['yoy'], gt['ly'])}) | "
+                         f"vs 13-week average {pct(gt['vs_avg'], gt['avg'])} | 13-week average YoY {fmt_signed(gt['avg_yoy'], 'GAL')} ({pct(gt['avg_yoy'], gt['ly_avg'])}) | WoW {fmt_signed(gt['wow'], 'GAL')}")
     lines += _ctx_list("REGION GROUPS (for context only)", group_ctx)
     lines += _ctx_list("STRONGEST REGIONS VS. LAST YEAR (for context only)",
-                       [f"Region {r['code']} ({r['rep']}): YoY {fmt_signed(r['t']['yoy'], 'GAL')} ({pct(r['t']['yoy'], r['t']['ly'])})" for r in up])
+                       [f"Region {r['code']} ({r['rep']}): YoY vs same week last year {fmt_signed(r['t']['yoy'], 'GAL')} ({pct(r['t']['yoy'], r['t']['ly'])}) | vs 13-week average {pct(r['t']['vs_avg'], r['t']['avg'])} | 13-week average YoY {pct(r['t']['avg_yoy'], r['t']['ly_avg'])}" for r in up])
     lines += _ctx_list("WEAKEST REGIONS VS. LAST YEAR (for context only)",
-                       [f"Region {r['code']} ({r['rep']}): YoY {fmt_signed(r['t']['yoy'], 'GAL')} ({pct(r['t']['yoy'], r['t']['ly'])})" for r in down])
+                       [f"Region {r['code']} ({r['rep']}): YoY vs same week last year {fmt_signed(r['t']['yoy'], 'GAL')} ({pct(r['t']['yoy'], r['t']['ly'])}) | vs 13-week average {pct(r['t']['vs_avg'], r['t']['avg'])} | 13-week average YoY {pct(r['t']['avg_yoy'], r['t']['ly_avg'])}" for r in down])
     lines += _ctx_list(f"TOP {n} BIGGEST WEEK-OVER-WEEK DECREASES (for context only)", _change_ctx(dec))
     lines += _ctx_list(f"TOP {n} NEWLY DARK ACCOUNTS (for context only)", _dark_ctx(dark))
     lines += _ctx_list(f"TOP {n} BIGGEST WEEK-OVER-WEEK INCREASES (for context only)", _change_ctx(inc))
@@ -646,13 +676,137 @@ OUTPUT FORMAT -- follow this exact order:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Manager roll-up (Inside East / Inside West)
+# Regional VP summary (East / West): the executive summary limited to one side of the business
 # ═══════════════════════════════════════════════════════════════════════════════
-def build_manager_prompt(group, manager, accts, alignment, report_date, region_report=None, n=MANAGER_TOP_N):
+def build_vp_prompt(label, groups, ttc_managers, recipients, accts, alignment, report_date,
+                    ttc_results=None, region_report=None, n=LEADERSHIP_TOP_N):
+    codes = set()
+    for g in groups:
+        codes |= set(alignment["groups"].get(g) or [])
+    scope_accts = [a for a in accts if a["region"] in codes]
+    member_rows = [region_report["groups"][g] for g in groups if region_report and g in region_report["groups"]]
+    if region_report and len(member_rows) == len(groups):
+        t = totals_from_row(merge_region_rows(member_rows, label))
+        group_ctx_src = [(g, totals_from_row(region_report["groups"][g])) for g in groups]
+        recs = [r for r in region_recs_from_region(region_report, codes=codes) if r["t"]["ly"] > 0]
+    else:
+        gmap = group_map(alignment)
+        t = totals(scope_accts)
+        group_ctx_src = [(g, totals([a for a in scope_accts if gmap.get(a["region"]) == g])) for g in groups]
+        recs = [r for r in region_rollups(scope_accts, alignment) if r["t"]["ly"] > 0]
+    gtable = md_table(GROUP_HEADERS, [group_row(g, gt) for g, gt in group_ctx_src] + [group_row("**Total**", t)])
+    ranked = sorted(recs, key=lambda r: r["t"]["yoy"], reverse=True)
+    up = [r for r in ranked if r["t"]["yoy"] > 0][:5]
+    down = [r for r in reversed(ranked) if r["t"]["yoy"] < 0][:5]
+
+    list_accts = [a for a in scope_accts if a["region"] not in EXEC_LIST_EXCLUDED_REGIONS]
+    dec = pick_decreases(list_accts, n, exclude_30=EXEC_EXCLUDE_30PCT_MOVES)
+    dark = pick_dark(list_accts, n)
+    inc = pick_increases(list_accts, n, exclude_30=EXEC_EXCLUDE_30PCT_MOVES)
+
+    table_map = {
+        "%%VP_HEADLINE%%": headline_table(t),
+        "%%VP_GROUP_TABLE%%": gtable,
+        "%%VP_REGION_UP%%": md_table(REGION_HEADERS, region_rows(up)),
+        "%%VP_REGION_DOWN%%": md_table(REGION_HEADERS, region_rows(down)),
+        "%%VP_DEC%%": md_table(CHANGE_HEADERS, change_rows(dec)),
+        "%%VP_DARK%%": md_table(DARK_HEADERS, dark_rows(dark)),
+        "%%VP_INC%%": md_table(CHANGE_HEADERS, change_rows(inc)),
+    }
+    team_names = " and ".join(TTC_TEAM(m) for m in ttc_managers)
+    lines = [f"{label.upper()} FLEET SALES EXECUTIVE SUMMARY — Period Ending {report_date}", "=" * 60,
+             f"\nSCOPE: {label} only -- the {' and '.join(groups)} fuel accounts" + (f" and the {team_names} Truck Care team" if ttc_results else "") +
+             ". Nothing outside this scope is included. YoY compares this week to the same week last year."]
+    lines += _ctx_list("FUEL HEADLINE (for context only)", _headline_ctx(t))
+    group_ctx = []
+    for g, gt in group_ctx_src:
+        group_ctx.append(f"{g}: this week {fmt_plain(gt['current'], 'GAL')} | YoY vs same week last year {fmt_signed(gt['yoy'], 'GAL')} ({pct(gt['yoy'], gt['ly'])}) | "
+                         f"vs 13-week average {pct(gt['vs_avg'], gt['avg'])} | 13-week average YoY {fmt_signed(gt['avg_yoy'], 'GAL')} ({pct(gt['avg_yoy'], gt['ly_avg'])}) | WoW {fmt_signed(gt['wow'], 'GAL')}")
+    lines += _ctx_list("GROUPS (for context only)", group_ctx)
+    reg_line = lambda r: (f"Region {r['code']} ({r['rep']}): YoY vs same week last year {fmt_signed(r['t']['yoy'], 'GAL')} ({pct(r['t']['yoy'], r['t']['ly'])}) | "  # noqa: E731
+                          f"vs 13-week average {pct(r['t']['vs_avg'], r['t']['avg'])} | 13-week average YoY {pct(r['t']['avg_yoy'], r['t']['ly_avg'])}")
+    lines += _ctx_list("STRONGEST REGIONS VS. LAST YEAR (for context only)", [reg_line(r) for r in up])
+    lines += _ctx_list("WEAKEST REGIONS VS. LAST YEAR (for context only)", [reg_line(r) for r in down])
+    lines += _ctx_list(f"TOP {n} BIGGEST WEEK-OVER-WEEK DECREASES (for context only)", _change_ctx(dec))
+    lines += _ctx_list(f"TOP {n} NEWLY DARK ACCOUNTS (for context only)", _dark_ctx(dark))
+    lines += _ctx_list(f"TOP {n} BIGGEST WEEK-OVER-WEEK INCREASES (for context only)", _change_ctx(inc))
+
+    flagged = len(dec) + len(dark) + len(inc)
+    has_ttc = bool(ttc_results) and any(ttc_results.get("manager_rollups", {}).get(m) for m in ttc_managers)
+    if has_ttc:
+        sum_table, _ = ttc_summary_table(ttc_results, ttc_managers)
+        table_map["%%VP_TTC_SUMMARY%%"] = sum_table
+        declines = ttc_decline_lists(ttc_results, n, exclude_30=EXEC_TTC_EXCLUDE_30PCT_MOVES, managers=ttc_managers)
+        for sheet in TTC_METRIC_SHEETS:
+            table_map[TTC_TOKEN[sheet].replace("EXEC_", "VP_")] = declines[sheet]["table"]
+            flagged += len(declines[sheet]["items"])
+        ttc_ctx = []
+        for m in ttc_managers:
+            for sheet in TTC_METRIC_SHEETS:
+                r = ttc_results.get("manager_rollups", {}).get(m, {}).get(sheet)
+                if r:
+                    u = TTC_METRIC_UNITS.get(sheet, "")
+                    ttc_ctx.append(f"{TTC_TEAM(m)} | {sheet}: this week {fmt_plain(r['this_week'], u)} | 13Wk avg {fmt_plain(r['avg_13wk'], u)} | YoY vs same week last year {fmt_signed(r['yoy'], u)}")
+        lines += _ctx_list("TRUCK CARE TEAM SUMMARY (for context only)", ttc_ctx)
+        for sheet in TTC_METRIC_SHEETS:
+            u = declines[sheet]["unit"]
+            lines += _ctx_list(f"TOP {n} TRUCK CARE DECLINES — {TTC_HEADING[sheet]} (for context only)",
+                               [f"{v['customer']} | {v['team']} | This week {fmt_plain(v['this_week'], u)} | Prior {fmt_plain(v['prior_week'], u)} | WoW {fmt_signed(v['delta'], u)} | YoY {fmt_signed(v['yoy'], u)}"
+                                for v in declines[sheet]["items"]])
+
+    sections = [
+        ("FUEL VOLUME — YEAR OVER YEAR",
+         "On its own line, output exactly: %%VP_HEADLINE%%\nAfter the token: 2-3 bullets. Lead with the YoY result for the week and the 13-week average YoY result, then the week-over-week and vs.-average movement. Quote the figures from the headline above."),
+        ("YEAR OVER YEAR BY GROUP",
+         "On its own line, output exactly: %%VP_GROUP_TABLE%%\n### Strongest Regions vs. Last Year\nOn its own line, output exactly: %%VP_REGION_UP%%\n### Weakest Regions vs. Last Year\nOn its own line, output exactly: %%VP_REGION_DOWN%%\nAfter the three tokens: 2-3 bullets on which groups and regions are driving the YoY result."),
+        (f"TOP {n} BIGGEST DECREASES (WEEK OVER WEEK, GALLONS)",
+         "On its own line, output exactly: %%VP_DEC%%\nAfter the token: 2 bullets on concentration by region or rep and the size of the largest losses."),
+        (f"TOP {n} NEWLY DARK ACCOUNTS",
+         "On its own line, output exactly: %%VP_DARK%%\nAfter the token: 2 bullets on the largest dark accounts and any region or rep concentration."),
+        (f"TOP {n} BIGGEST INCREASES (WEEK OVER WEEK, GALLONS)",
+         "On its own line, output exactly: %%VP_INC%%\nAfter the token: 2 bullets on the largest gainers."),
+    ]
+    if has_ttc:
+        ttc_body = ["### By Team\nOn its own line, output exactly: %%VP_TTC_SUMMARY%%",
+                    "After the table token above: 2-3 bullets on the YoY direction for Tires, PM, TCE Spend per Truck and Labor Hours.",
+                    f"### Top {n} Declines by Metric (week over week)"]
+        for sheet in TTC_METRIC_SHEETS:
+            ttc_body.append(f"#### {TTC_HEADING[sheet]}\nOn its own line, output exactly: {TTC_TOKEN[sheet].replace('EXEC_', 'VP_')}")
+        ttc_body.append("After all four tokens: 2-3 bullets on the largest declines and any accounts that appear under more than one metric.")
+        sections.append(("TRUCK CARE", "\n".join(ttc_body)))
+    sections.append(("KEY TAKEAWAYS", "3 bullets. Each names a specific account (with its region), region or team, states a specific number from this document, and surfaces an observation."))
+    sections.append(("CLOSING", "One sentence. Factual only."))
+
+    prompt = "\n".join(lines) + f"""
+
+---
+INSTRUCTIONS:
+You are the Fleet Sales Intelligence Agent for Love's Travel Stops fleet sales team. Write the executive summary for the {label} vice president ({' and '.join(recipients)}). They focus on year-over-year numbers, so lead with YoY. Cover {label} only: do not mention other regions, other groups, national accounts, or any fleet-wide total.
+
+{RULES}
+
+OUTPUT FORMAT -- follow this exact order:
+
+## {label.upper()} FLEET SALES EXECUTIVE SUMMARY
+**Period Ending: {report_date}**
+
+{_number_sections(sections)}
+"""
+    return prompt, table_map, flagged
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Manager brief (Inside Sales = Inside East + Inside West, one email to both managers)
+# ═══════════════════════════════════════════════════════════════════════════════
+def build_manager_prompt(label, groups, managers, accts, alignment, report_date, region_report=None, n=MANAGER_TOP_N):
+    codes = set()
+    for g in groups:
+        codes |= set(alignment["groups"].get(g) or [])
     # Group and region totals come from the fleet Region report when it was uploaded (matches the executives' graphs).
-    if region_report and group in region_report["groups"]:
-        t = totals_from_row(region_report["groups"][group])
-        recs = region_recs_from_region(region_report, codes=alignment["groups"].get(group))
+    member_rows = [region_report["groups"][g] for g in groups if region_report and g in region_report["groups"]]
+    if region_report and len(member_rows) == len(groups):
+        t = totals_from_row(merge_region_rows(member_rows, label))
+        recs = region_recs_from_region(region_report, codes=codes)
     else:
         t = totals(accts)
         recs = region_rollups(accts, alignment)
@@ -667,36 +821,38 @@ def build_manager_prompt(group, manager, accts, alignment, report_date, region_r
         "%%MGR_DARK%%": md_table(DARK_HEADERS, dark_rows(dark)),
         "%%MGR_INC%%": md_table(CHANGE_HEADERS, change_rows(inc)),
     }
-    lines = [f"{group.upper()} SUMMARY — Period Ending {report_date}", "=" * 60,
-             f"\nSCOPE: every fuel customer in the regions that report to this manager ({group}). "
+    lines = [f"{label.upper()} WEEKLY BRIEF — Period Ending {report_date}", "=" * 60,
+             f"\nSCOPE: every fuel customer in the regions that report into {label} (Inside East and Inside West together, treated as one group). "
              "Nothing outside this group is included. YoY compares this week to the same week last year."]
     lines += _ctx_list("GROUP FUEL HEADLINE (for context only)", _headline_ctx(t))
     lines += _ctx_list("REGIONS (for context only)",
-                       [f"Region {r['code']} ({r['rep']}): this week {fmt_plain(r['t']['current'], 'GAL')} | WoW {fmt_signed(r['t']['wow'], 'GAL')} | YoY {fmt_signed(r['t']['yoy'], 'GAL')} ({pct(r['t']['yoy'], r['t']['ly'])})" for r in recs])
+                       [f"Region {r['code']} ({r['rep']}): this week {fmt_plain(r['t']['current'], 'GAL')} | WoW {fmt_signed(r['t']['wow'], 'GAL')} | "
+                        f"vs 13-week average {pct(r['t']['vs_avg'], r['t']['avg'])} | YoY vs same week last year {fmt_signed(r['t']['yoy'], 'GAL')} ({pct(r['t']['yoy'], r['t']['ly'])}) | "
+                        f"13-week average YoY {fmt_signed(r['t']['avg_yoy'], 'GAL')} ({pct(r['t']['avg_yoy'], r['t']['ly_avg'])})" for r in recs])
     lines += _ctx_list(f"TOP {n} BIGGEST WEEK-OVER-WEEK DECREASES (for context only)", _change_ctx(dec))
     lines += _ctx_list(f"TOP {n} NEWLY DARK ACCOUNTS (for context only)", _dark_ctx(dark))
     lines += _ctx_list(f"TOP {n} BIGGEST WEEK-OVER-WEEK INCREASES (for context only)", _change_ctx(inc))
 
     sections = [
-        ("GROUP HEADLINE", f"On its own line, output exactly: %%MGR_HEADLINE%%\nAfter the token: 2-3 bullets on the group's year-over-year result, week-over-week movement and position vs. the 13-week average."),
+        ("GROUP HEADLINE", "On its own line, output exactly: %%MGR_HEADLINE%%\nAfter the token: 2-3 bullets on the group's year-over-year result (this week vs. the same week last year, and the 13-week average vs. last year's 13-week average), week-over-week movement and position vs. the 13-week average."),
         ("REGIONS", "On its own line, output exactly: %%MGR_REGIONS%%\nAfter the token: 2-3 bullets on which regions are driving the group's result, up or down."),
-        (f"TOP {n} DECREASES (WEEK OVER WEEK, GALLONS)", "On its own line, output exactly: %%MGR_DEC%%\nAfter the token: 1-2 bullets on rep or region concentration."),
-        (f"TOP {n} NEWLY DARK ACCOUNTS", "On its own line, output exactly: %%MGR_DARK%%\nAfter the token: 1-2 bullets on the largest dark accounts."),
-        (f"TOP {n} INCREASES (WEEK OVER WEEK, GALLONS)", "On its own line, output exactly: %%MGR_INC%%\nAfter the token: 1-2 bullets on the largest gainers."),
-        ("KEY TAKEAWAYS", "3 bullets. Each names a specific account, region or rep, states a specific number from this document, and surfaces an observation."),
+        (f"TOP {n} DECREASES (WEEK OVER WEEK, GALLONS)", "On its own line, output exactly: %%MGR_DEC%%\nAfter the token: 1-2 bullets on rep or region concentration. Always say which region an account is in."),
+        (f"TOP {n} NEWLY DARK ACCOUNTS", "On its own line, output exactly: %%MGR_DARK%%\nAfter the token: 1-2 bullets on the largest dark accounts. Always say which region an account is in."),
+        (f"TOP {n} INCREASES (WEEK OVER WEEK, GALLONS)", "On its own line, output exactly: %%MGR_INC%%\nAfter the token: 1-2 bullets on the largest gainers. Always say which region an account is in."),
+        ("KEY TAKEAWAYS", "3 bullets. Each names a specific account (with its region), region or rep, states a specific number from this document, and surfaces an observation."),
         ("CLOSING", "One sentence. Factual only."),
     ]
     prompt = "\n".join(lines) + f"""
 
 ---
 INSTRUCTIONS:
-You are the Fleet Sales Intelligence Agent for Love's Travel Stops fleet sales team. Write a high-level summary of the {group} group for its manager. Do not mention other groups, other managers, or any fleet-wide total.
+You are the Fleet Sales Intelligence Agent for Love's Travel Stops fleet sales team. Write a high-level weekly brief on {label} for its managers ({' and '.join(managers)}). Treat {label} as ONE group: never split it into Inside East and Inside West. Do not mention other groups, other managers, or any fleet-wide total.
 
 {RULES}
 
 OUTPUT FORMAT -- follow this exact order:
 
-## {group.upper()} SUMMARY
+## {label.upper()} WEEKLY BRIEF
 **Period Ending: {report_date}**
 
 {_number_sections(sections)}
@@ -758,20 +914,69 @@ def build_leadership_items(fuel_path, alignment, report_date, ttc_results=None, 
         "warnings": warnings, "file_stem": "Executive_Summary",
     })
 
-    # ── Manager roll-ups ──
-    for group, manager in MANAGER_BRIEFS:
-        label = f"{group} ({manager})"
-        codes = alignment["groups"].get(group)
-        if not codes:
-            skipped.append({"email": label, "reason": f"No '{group}' group on the alignment file's FUEL tab"})
+    # ── Regional VP summaries (East / West) ──
+    for vp in VP_BRIEFS:
+        label, groups, ttc_mgrs, recips = vp["label"], vp["groups"], vp["ttc_managers"], vp["recipients"]
+        shown = f"{label} VP ({', '.join(recips)})"
+        codes = set()
+        for g in groups:
+            codes |= set(alignment["groups"].get(g) or [])
+        missing = [g for g in groups if not alignment["groups"].get(g)]
+        if missing or not codes:
+            skipped.append({"email": shown, "reason": "No " + " / ".join(f"'{g}'" for g in (missing or groups)) + " group on the alignment file's FUEL tab"})
             continue
-        addr = make_email(manager)
-        if not addr:
-            skipped.append({"email": label, "reason": f"Can't build an address from '{manager}'"})
+        addrs, bad = [], []
+        for r_ in recips:
+            a_ = make_email(r_)
+            (addrs if a_ else bad).append(a_ or r_)
+        if bad:
+            skipped.append({"email": shown, "reason": "Can't build an address from " + ", ".join(f"'{b_}'" for b_ in bad)})
+            continue
+        scope_accts = [a for a in accts if a["region"] in codes]
+        if not scope_accts:
+            skipped.append({"email": shown, "reason": f"No customers found for the {label} regions in this report"})
+            continue
+        warnings = []
+        present = {a["region"] for a in scope_accts}
+        open_codes = sorted(c for c in codes if c in present and is_open_seat((alignment["regions"].get(c) or {}).get("rep")))
+        if open_codes:
+            warnings.append("Includes open-seat region(s): " + ", ".join(open_codes))
+        if not ttc_results:
+            warnings.append("No Truck Care reports uploaded -- this summary will be fuel only")
+        elif not any(ttc_results.get("manager_rollups", {}).get(m) for m in ttc_mgrs):
+            warnings.append("No Truck Care data found for " + ", ".join(ttc_mgrs) + " -- this summary will be fuel only")
+        warnings += region_notes
+        prompt, table_map, flagged = build_vp_prompt(label, groups, ttc_mgrs, recips, accts, alignment, report_date, ttc_results, region_report)
+        items.append({
+            "id": f"vp-{label.lower()}", "kind": "exec", "label": shown,
+            "to_name": " / ".join(recips), "greeting_name": _joined_first_names(recips),
+            "to": "; ".join(addrs), "cc": [],
+            "subject": f"{vp['subject']} Period Ending {report_date}",
+            "prompt": prompt, "table_map": table_map, "flagged": flagged,
+            "warnings": warnings, "file_stem": vp["file_stem"],
+        })
+
+    # ── Manager brief(s): one email addressed to every manager of the combined group ──
+    for brief in MANAGER_BRIEFS:
+        label, groups, managers = brief["label"], brief["groups"], brief["managers"]
+        shown = f"{label} ({', '.join(managers)})"
+        codes = set()
+        missing = [g for g in groups if not alignment["groups"].get(g)]
+        for g in groups:
+            codes |= set(alignment["groups"].get(g) or [])
+        if missing or not codes:
+            skipped.append({"email": shown, "reason": "No " + " / ".join(f"'{g}'" for g in (missing or groups)) + " group on the alignment file's FUEL tab"})
+            continue
+        addrs, bad = [], []
+        for m in managers:
+            a_ = make_email(m)
+            (addrs if a_ else bad).append(a_ or m)
+        if bad:
+            skipped.append({"email": shown, "reason": "Can't build an address from " + ", ".join(f"'{b_}'" for b_ in bad)})
             continue
         group_accts = [a for a in accts if a["region"] in codes]
         if not group_accts:
-            skipped.append({"email": label, "reason": f"No customers found for the {group} regions in this report"})
+            skipped.append({"email": shown, "reason": f"No customers found for the {label} regions in this report"})
             continue
         warnings = []
         present = {a["region"] for a in group_accts}
@@ -780,13 +985,13 @@ def build_leadership_items(fuel_path, alignment, report_date, ttc_results=None, 
         if open_codes:
             warnings.append("Includes open-seat region(s): " + ", ".join(open_codes))
         warnings += region_notes
-        prompt, table_map, flagged = build_manager_prompt(group, manager, group_accts, alignment, report_date, region_report)
+        prompt, table_map, flagged = build_manager_prompt(label, groups, managers, group_accts, alignment, report_date, region_report)
         items.append({
-            "id": f"mgr-{group.lower().replace(' ', '-')}", "kind": "manager", "label": label,
-            "to_name": manager, "greeting_name": first_name(manager),
-            "to": addr, "cc": [],
-            "subject": f"{group} Summary Period Ending {report_date}",
+            "id": f"mgr-{label.lower().replace(' ', '-')}", "kind": "manager", "label": shown,
+            "to_name": " / ".join(managers), "greeting_name": _joined_first_names(managers),
+            "to": "; ".join(addrs), "cc": [],
+            "subject": f"{brief['subject']} Period Ending {report_date}",
             "prompt": prompt, "table_map": table_map, "flagged": flagged,
-            "warnings": warnings, "file_stem": f"{group.replace(' ', '_')}_Summary",
+            "warnings": warnings, "file_stem": brief["file_stem"],
         })
     return items, skipped
