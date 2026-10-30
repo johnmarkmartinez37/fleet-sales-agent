@@ -172,8 +172,8 @@ def estimate_cost(items):
     """Rough range. Input tokens ~ chars/3 (conservative for table-heavy text);
     output tokens: typical 1,500 (fuel) / 2,500 (TTC), high 4,000 / 6,000."""
     in_tok = sum(len(i["prompt"]) / 3.0 for i in items)
-    typical_by_kind = {"fuel": 1500, "manager": 1500, "ttc": 2500, "exec": 3000}
-    high_by_kind = {"fuel": 4000, "manager": 4000, "ttc": 6000, "exec": 7000}
+    typical_by_kind = {"fuel": 1500, "manager": 2500, "ttc": 2500, "exec": 3000}
+    high_by_kind = {"fuel": 4000, "manager": 6000, "ttc": 6000, "exec": 7000}
     typical_out = sum(typical_by_kind.get(i["kind"], 2500) for i in items)
     high_out = sum(high_by_kind.get(i["kind"], 6000) for i in items)
 
