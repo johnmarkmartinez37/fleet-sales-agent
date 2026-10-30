@@ -117,13 +117,28 @@ EMAIL_OVERRIDES = {
     "Larry Masiulis": "Laurynas.Masiulis@loves.com",
 }
 
-# ── Leadership emails (executive summary + Inside East / Inside West manager roll-ups) ──────
+# ── Leadership emails (executive summary + the combined Inside Sales brief) ──────
 EXEC_RECIPIENTS = ["Stephen Parker", "Jon Archard"]       # To: line of the executive summary (no CC)
 EXEC_SUBJECT_LABEL = "Fleet Sales Executive Summary"
-MANAGER_BRIEFS = [                                       # (group name in the alignment file's FUEL tab, manager)
-    ("Inside East", "Kelvin Ling"),
-    ("Inside West", "Megan Dwarshuis"),
+# One combined brief for the Inside Sales managers: every group in "groups" is merged into a single set of tables and sent
+# as ONE email addressed To all "managers".
+MANAGER_BRIEFS = [
+    {"label": "Inside Sales",
+     "groups": ["Inside East", "Inside West"],          # group names on the alignment file's FUEL tab
+     "managers": ["Kelvin Ling", "Megan Dwarshuis"],
+     "subject": "Inside Sales Weekly Brief",
+     "file_stem": "Inside_Sales_Weekly_Brief"},
 ]
+# Executive summary for each regional VP: same layout as the executive summary, limited to that VP's fuel groups and
+# Truck Care team. National, Aggregators and the TTC National Accounts team are not included.
+VP_BRIEFS = [
+    {"label": "East", "groups": ["East", "Inside East"], "ttc_managers": ["Brett Moody"],
+     "recipients": ["Steve Bennett"], "subject": "East Fleet Sales Executive Summary", "file_stem": "East_Executive_Summary"},
+    {"label": "West", "groups": ["West", "Inside West"], "ttc_managers": ["TJ Atwood"],
+     "recipients": ["Todd Wilson"], "subject": "West Fleet Sales Executive Summary", "file_stem": "West_Executive_Summary"},
+]
+# Groups shown as ONE row in the executive summary's region group table (sum of the member groups).
+GROUP_MERGES = {"Inside Sales": ["Inside East", "Inside West"]}
 LEADERSHIP_TOP_N = 10          # rows in each executive top-N list
 MANAGER_TOP_N = 10              # rows in each manager top-N list
 # The weekly rep emails leave out fuel accounts that moved 30% or more in a week (a separate exception report
