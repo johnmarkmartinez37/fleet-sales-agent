@@ -609,7 +609,7 @@ if st.session_state.mode is None:
         em_region_file = st.file_uploader(
             "Fleet Region Report -- the 'Graphs' report used on the weekly sales call (recommended)",
             type=["xlsx", "xls"], key="em_region_upload",
-            help="Makes the executive summary and the Inside East / Inside West roll-ups use exactly the same fleet, group and region totals as the weekly sales-call graphs.")
+            help="Makes the executive summary and the Inside Sales brief use exactly the same fleet, group and region totals as the weekly sales-call graphs.")
         st.markdown("**Truck Care (optional)** -- upload both Truck Care reports to include the three TTC manager emails.")
         col3, col4 = st.columns(2)
         with col3:
