@@ -108,6 +108,7 @@ TTC_EMAIL_LABELS = {
     "Keith Taggart": "TTC National Accounts",
     "TJ Atwood": "TTC West",
 }
+TTC_INSIDE_LABEL = "TTC Inside Sales"      # the Inside Sales Truck Care team (shown in the Inside Sales brief only)
 
 # Names whose email is NOT First.Last@loves.com. Key = full name exactly as it appears in the alignment file.
 EMAIL_OVERRIDES = {
