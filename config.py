@@ -27,6 +27,7 @@ CUSTOMER_COLS = {
     "current_week": 8,
     "prior_week":   9,
     "yoy_avg":      21,
+    "yoy_dsl_avg":  22,
 }
 
 REGION_COLS = {
@@ -39,6 +40,7 @@ REGION_COLS = {
     "current_week": 6,
     "prior_week":   7,
     "yoy_avg":      19,
+    "yoy_dsl_avg":  20,
 }
 
 METRIC_SHEETS = ["Fuel", "Tires", "PM", "TCE Spend per Truck", "Labor Hrs"]
@@ -113,4 +115,35 @@ EMAIL_OVERRIDES = {
     "Stephen Kelly": "steve.kelly@loves.com",
     "Rigoberto Martinez": "rigo.martinez@loves.com",
     "Larry Masiulis": "Laurynas.Masiulis@loves.com",
+}
+
+# ── Leadership emails (executive summary + Inside East / Inside West manager roll-ups) ──────
+EXEC_RECIPIENTS = ["Stephen Parker", "Jon Archard"]       # To: line of the executive summary (no CC)
+EXEC_SUBJECT_LABEL = "Fleet Sales Executive Summary"
+MANAGER_BRIEFS = [                                       # (group name in the alignment file's FUEL tab, manager)
+    ("Inside East", "Kelvin Ling"),
+    ("Inside West", "Megan Dwarshuis"),
+]
+LEADERSHIP_TOP_N = 10          # rows in each executive top-N list
+MANAGER_TOP_N = 10              # rows in each manager top-N list
+# The weekly rep emails leave out fuel accounts that moved 30% or more in a week (a separate exception report
+# covers them). True does the same for the executive top-10 fuel decreases AND increases.
+EXEC_EXCLUDE_30PCT_MOVES = True
+# Same 30% rule for the executive Truck Care top-10 tables. Off by default: the 30% exception report is a fuel report,
+# and most Truck Care swings (small tire / PM counts) are over 30%, so turning this on empties most of those tables.
+EXEC_TTC_EXCLUDE_30PCT_MOVES = False
+# Regions whose accounts are left out of the executive TOP-10 LISTS only (totals and YoY tables still include them).
+# Example: {"9"} to keep the aggregator programs (Region 9) out of the lists.
+EXEC_LIST_EXCLUDED_REGIONS = set()
+
+# The fleet Region report (the one behind the weekly sales-call graphs) counts these regions inside another region.
+# Region 29 customers are part of Region 26 there, so the executive / manager emails do the same to match it.
+REGION_ROLLUPS = {"29": "26"}
+
+# Extra people copied on a region's weekly brief, on top of that region's Area Managers.
+# Key = region number (as text), value = full names as they should be turned into First.Last@loves.com.
+EXTRA_CC = {
+    "11": ["Kelvin Ling"],
+    "14": ["Kelvin Ling"],
+    "16": ["Kelvin Ling"],
 }
