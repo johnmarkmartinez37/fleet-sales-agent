@@ -80,6 +80,42 @@ def parse_ttc_roster(ws):
     return roster
 
 
+def parse_inside_roster(ws):
+    """Reps listed under the 'Inside' row of the Truck Care hierarchy (the Inside Sales Truck Care team) -> 'Inside'.
+    The team ends at the next senior manager or the first blank row."""
+    rows = list(ws.iter_rows(values_only=True))
+    start = None
+    for i, row in enumerate(rows):
+        if row and row[0] == "Truck Care Hierarchy":
+            start = i
+            break
+    if start is None:
+        return {}
+    roster, inside = {}, False
+    for i in range(start + 1, len(rows)):
+        name = rows[i][0] if rows[i] else None
+        if name is None or str(name).strip() == "":
+            break
+        name = str(name).strip()
+        if name == "Inside":
+            inside = True
+            continue
+        if name in TTC_KNOWN_MANAGERS:
+            inside = False
+            continue
+        if inside:
+            roster[name] = "Inside"
+    return roster
+
+
+def build_inside_roster(wb_region):
+    roster = {}
+    for sheet in TTC_METRIC_SHEETS:
+        if sheet in wb_region.sheetnames:
+            roster.update(parse_inside_roster(wb_region[sheet]))
+    return roster
+
+
 def build_master_roster(wb_region):
     """Merge the roster across all 4 metric sheets for maximum coverage."""
     roster = {}
@@ -353,6 +389,9 @@ def analyze_ttc_reports(customer_path, region_path, monthly_path=None):
         "customer_records": {},   # manager -> {sheet -> list of ALL customer records}
         "flagged_customers": {},  # manager -> {sheet -> list of records clearing the threshold}
         "monthly": None,
+        "inside_roster": {},      # Inside Sales Truck Care reps -> "Inside" (not part of Brett / Keith / TJ)
+        "inside_rollups": {},     # sheet -> the Inside team's own subtotal row
+        "inside_customer_records": {},  # sheet -> list of ALL customer records for the Inside team
         "errors": [],
     }
 
@@ -362,6 +401,12 @@ def analyze_ttc_reports(customer_path, region_path, monthly_path=None):
         if "Tires" in wb_region.sheetnames:
             results["week_dates"] = get_week_dates(wb_region["Tires"])
         results["roster"] = build_master_roster(wb_region)
+        results["inside_roster"] = build_inside_roster(wb_region)
+        for sheet in TTC_METRIC_SHEETS:
+            if sheet in wb_region.sheetnames:
+                r_ = analyze_manager_rollup(wb_region[sheet], sheet, "Inside", results["week_dates"])
+                if r_:
+                    results["inside_rollups"][sheet] = r_
 
         for manager in TTC_KNOWN_MANAGERS:
             results["manager_rollups"][manager] = {}
@@ -393,6 +438,10 @@ def analyze_ttc_reports(customer_path, region_path, monthly_path=None):
                 results["flagged_customers"][manager][sheet] = filter_significant_customers(
                     records, sheet, TTC_ALERT_THRESHOLDS
                 )
+        for sheet in TTC_METRIC_SHEETS:
+            if sheet in wb_customer.sheetnames:
+                results["inside_customer_records"][sheet] = analyze_ttc_customers(
+                    wb_customer[sheet], "Inside", results["inside_roster"])
     except Exception as e:
         results["errors"].append(f"Customer file error: {str(e)}")
 
