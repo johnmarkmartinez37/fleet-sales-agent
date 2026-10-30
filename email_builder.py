@@ -1,6 +1,7 @@
 """Email automation (Phase 1).
 
-Turns the analysis results into one email per rep (fuel regions) and one per TTC manager, generates each
+Turns the analysis results into one email per rep (fuel regions), one per TTC manager, and the leadership
+emails (leadership.py), generates each
 brief with Claude, and packages the result as JSON files that a Power Automate flow sends from Outlook.
 
 This module deliberately has no Streamlit dependency so it can be tested on its own.
@@ -18,6 +19,7 @@ from alignment import (
     region_key, first_name, make_email, is_open_seat, inside_region_codes,
 )
 from config import (
+    REGION_ROLLUPS, EXTRA_CC,
     EMAIL_EXCLUDED_REGIONS, EMAIL_SIGNOFF, EMAIL_MAX_WORKERS, EMAIL_MAX_TOKENS,
     EMAIL_MODEL, PRICE_INPUT_PER_MTOK, PRICE_OUTPUT_PER_MTOK,
     TTC_KNOWN_MANAGERS, TTC_EMAIL_LABELS,
@@ -29,10 +31,17 @@ from ttc_prompt import build_ttc_prompt
 # ═══════════════════════════════════════════════════════════════════════════════
 # Planning: who gets which email
 # ═══════════════════════════════════════════════════════════════════════════════
+def _rolled_region(value):
+    """Region number an account reports under: 30.1 -> 30, and regions the fleet Region report counts inside
+    another region (Region 29 -> 26) follow that region."""
+    k = region_key(value)
+    return REGION_ROLLUPS.get(k, k)
+
+
 def filter_results_for_region(results, code):
-    """Every account whose region rolls up to this region number (30, 30.1, 30.2 -> '30')."""
+    """Every account whose region rolls up to this region number (30, 30.1, 30.2 -> '30'; 29 -> '26')."""
     def match(a):
-        return region_key(a.get("region")) == code
+        return _rolled_region(a.get("region")) == code
     return {
         "report_date": results["report_date"],
         "region_summary": [],
@@ -86,12 +95,12 @@ def build_fuel_items(results, alignment):
             continue
 
         cc_addrs = []
-        for am in entry["area_managers"]:
+        for am in list(entry["area_managers"]) + list(EXTRA_CC.get(code, [])):
             addr = make_email(am)
-            if addr:
+            if not addr:
+                warnings.append(f"Can't build an address for '{am}' -- not CC'd")
+            elif addr.lower() != to_addr.lower() and addr.lower() not in {c.lower() for c in cc_addrs}:
                 cc_addrs.append(addr)
-            else:
-                warnings.append(f"Can't build an address for Area Manager '{am}' -- not CC'd")
 
         filtered = filter_results_for_region(results, code)
         flagged = _count_flagged(filtered)
@@ -121,10 +130,10 @@ def build_fuel_items(results, alignment):
     report_codes = set()
     for a in (results["fuel_main_alerts"] + results["fuel_secondary"]
               + results["fuel_newly_dark"] + results["fuel_increases"]):
-        report_codes.add(region_key(a.get("region")))
+        report_codes.add(_rolled_region(a.get("region")))
     for alerts in results["non_fuel_alerts"].values():
         for a in alerts:
-            report_codes.add(region_key(a.get("region")))
+            report_codes.add(_rolled_region(a.get("region")))
     for code in sorted(report_codes - set(alignment["regions"]), key=_region_sort_key):
         skipped.append({"email": f"Region {code}", "reason": "In the report but not in the alignment file -- not emailed"})
     return items, skipped
@@ -163,8 +172,10 @@ def estimate_cost(items):
     """Rough range. Input tokens ~ chars/3 (conservative for table-heavy text);
     output tokens: typical 1,500 (fuel) / 2,500 (TTC), high 4,000 / 6,000."""
     in_tok = sum(len(i["prompt"]) / 3.0 for i in items)
-    typical_out = sum(1500 if i["kind"] == "fuel" else 2500 for i in items)
-    high_out = sum(4000 if i["kind"] == "fuel" else 6000 for i in items)
+    typical_by_kind = {"fuel": 1500, "manager": 1500, "ttc": 2500, "exec": 3000}
+    high_by_kind = {"fuel": 4000, "manager": 4000, "ttc": 6000, "exec": 7000}
+    typical_out = sum(typical_by_kind.get(i["kind"], 2500) for i in items)
+    high_out = sum(high_by_kind.get(i["kind"], 6000) for i in items)
 
     def cost(i_tok, o_tok):
         return i_tok / 1e6 * PRICE_INPUT_PER_MTOK + o_tok / 1e6 * PRICE_OUTPUT_PER_MTOK
