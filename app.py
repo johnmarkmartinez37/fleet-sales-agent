@@ -164,6 +164,7 @@ from ttc_analyzer import analyze_ttc_reports
 from ttc_prompt import build_ttc_prompt
 from fuel_prompt import build_claude_prompt, fmt_pct, fmt_num
 from alignment import parse_alignment, find_saved_alignment
+from leadership import build_leadership_items, read_region_report
 from email_builder import (
     build_fuel_items, build_ttc_items, estimate_cost, actual_cost,
     generate_all, finalize_item, package_zip, _safe_date,
@@ -605,6 +606,10 @@ if st.session_state.mode is None:
                 st.error(saved_alignment_error)
             else:
                 st.warning("No saved alignment file found. Upload one, or save Region_Alignments.xlsx in the GitHub repo.")
+        em_region_file = st.file_uploader(
+            "Fleet Region Report -- the 'Graphs' report used on the weekly sales call (recommended)",
+            type=["xlsx", "xls"], key="em_region_upload",
+            help="Makes the executive summary and the Inside East / Inside West roll-ups use exactly the same fleet, group and region totals as the weekly sales-call graphs.")
         st.markdown("**Truck Care (optional)** -- upload both Truck Care reports to include the three TTC manager emails.")
         col3, col4 = st.columns(2)
         with col3:
@@ -637,6 +642,7 @@ if st.session_state.mode is None:
                     alignment = parse_alignment(align_path)
                     plan_items, plan_skipped = build_fuel_items(fuel_results, alignment)
                     plan_date = fuel_results["report_date"] or "Unknown"
+                    ttc_email_results = None
 
                     if em_ttc_customer_file is not None and em_ttc_region_file is not None:
                         ttc_c_path = save_upload(em_ttc_customer_file)
@@ -646,6 +652,11 @@ if st.session_state.mode is None:
                         if ttc_email_results["errors"]:
                             raise ValueError("; ".join(ttc_email_results["errors"]))
                         plan_items += build_ttc_items(ttc_email_results, ttc_email_results.get("report_date") or plan_date)
+
+                    region_report = read_region_report(save_upload(em_region_file)) if em_region_file is not None else None
+                    lead_items, lead_skipped = build_leadership_items(fuel_path, alignment, plan_date, ttc_email_results, region_report)
+                    plan_items += lead_items
+                    plan_skipped += lead_skipped
 
                 st.session_state.email_plan = {"items": plan_items, "skipped": plan_skipped, "report_date": plan_date}
                 st.session_state.email_outputs = {}
