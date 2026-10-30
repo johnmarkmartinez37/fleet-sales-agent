@@ -13,7 +13,7 @@ from alignment import region_key, first_name, make_email, is_open_seat
 from analyzer import safe_float, clean_field, find_last_known_value, NEWLY_DARK_MIN_GAL
 from config import (
     CUSTOMER_COLS, CUSTOMER_DATA_START_ROW, FUEL_SHEET,
-    TTC_METRIC_SHEETS, TTC_METRIC_UNITS, TTC_KNOWN_MANAGERS, TTC_EMAIL_LABELS,
+    TTC_METRIC_SHEETS, TTC_METRIC_UNITS, TTC_KNOWN_MANAGERS, TTC_EMAIL_LABELS, TTC_INSIDE_LABEL,
     EXEC_RECIPIENTS, EXEC_SUBJECT_LABEL, MANAGER_BRIEFS, GROUP_MERGES, VP_BRIEFS,
     REGION_DATA_START_ROW, REGION_ROLLUPS,
     LEADERSHIP_TOP_N, MANAGER_TOP_N, EXEC_EXCLUDE_30PCT_MOVES, EXEC_TTC_EXCLUDE_30PCT_MOVES, EXEC_LIST_EXCLUDED_REGIONS,
@@ -416,7 +416,15 @@ def dark_rows(lst):
 # ═══════════════════════════════════════════════════════════════════════════════
 # Truck Care tables (executive only)
 # ═══════════════════════════════════════════════════════════════════════════════
-TTC_TEAM = lambda m: TTC_EMAIL_LABELS.get(m, m)  # noqa: E731
+TTC_TEAM = lambda m: TTC_INSIDE_LABEL if m == "Inside" else TTC_EMAIL_LABELS.get(m, m)  # noqa: E731
+
+
+def ttc_inside_view(ttc_results):
+    """The Inside Sales Truck Care team, shaped like one more 'manager' so the same table builders can be reused."""
+    if not ttc_results or not ttc_results.get("inside_rollups"):
+        return None
+    return {"manager_rollups": {"Inside": ttc_results["inside_rollups"]},
+            "customer_records": {"Inside": ttc_results.get("inside_customer_records", {})}}
 
 
 def ttc_summary_table(ttc_results, managers=None):
@@ -798,7 +806,7 @@ OUTPUT FORMAT -- follow this exact order:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Manager brief (Inside Sales = Inside East + Inside West, one email to both managers)
 # ═══════════════════════════════════════════════════════════════════════════════
-def build_manager_prompt(label, groups, managers, accts, alignment, report_date, region_report=None, n=MANAGER_TOP_N):
+def build_manager_prompt(label, groups, managers, accts, alignment, report_date, region_report=None, n=MANAGER_TOP_N, ttc_results=None):
     codes = set()
     for g in groups:
         codes |= set(alignment["groups"].get(g) or [])
@@ -833,15 +841,45 @@ def build_manager_prompt(label, groups, managers, accts, alignment, report_date,
     lines += _ctx_list(f"TOP {n} NEWLY DARK ACCOUNTS (for context only)", _dark_ctx(dark))
     lines += _ctx_list(f"TOP {n} BIGGEST WEEK-OVER-WEEK INCREASES (for context only)", _change_ctx(inc))
 
+    flagged = len(dec) + len(dark) + len(inc)
+    inside_ttc = ttc_inside_view(ttc_results)
+    if inside_ttc:
+        sum_table, _ = ttc_summary_table(inside_ttc, ["Inside"])
+        table_map["%%MGR_TTC_SUMMARY%%"] = sum_table
+        declines = ttc_decline_lists(inside_ttc, n, exclude_30=EXEC_TTC_EXCLUDE_30PCT_MOVES, managers=["Inside"])
+        for sheet in TTC_METRIC_SHEETS:
+            table_map[TTC_TOKEN[sheet].replace("EXEC_", "MGR_")] = declines[sheet]["table"]
+            flagged += len(declines[sheet]["items"])
+        ttc_ctx = []
+        for sheet in TTC_METRIC_SHEETS:
+            r = inside_ttc["manager_rollups"]["Inside"].get(sheet)
+            if r:
+                u = TTC_METRIC_UNITS.get(sheet, "")
+                ttc_ctx.append(f"{TTC_TEAM('Inside')} | {sheet}: this week {fmt_plain(r['this_week'], u)} | 13Wk avg {fmt_plain(r['avg_13wk'], u)} | YoY vs same week last year {fmt_signed(r['yoy'], u)}")
+        lines += _ctx_list("TRUCK CARE TEAM SUMMARY (for context only)", ttc_ctx)
+        for sheet in TTC_METRIC_SHEETS:
+            u = declines[sheet]["unit"]
+            lines += _ctx_list(f"TOP {n} TRUCK CARE DECLINES — {TTC_HEADING[sheet]} (for context only)",
+                               [f"{v['customer']} | {v['team']} | TTC rep {v['rep']} | This week {fmt_plain(v['this_week'], u)} | Prior {fmt_plain(v['prior_week'], u)} | WoW {fmt_signed(v['delta'], u)} | YoY {fmt_signed(v['yoy'], u)}"
+                                for v in declines[sheet]["items"]])
+
     sections = [
         ("GROUP HEADLINE", "On its own line, output exactly: %%MGR_HEADLINE%%\nAfter the token: 2-3 bullets on the group's year-over-year result (this week vs. the same week last year, and the 13-week average vs. last year's 13-week average), week-over-week movement and position vs. the 13-week average."),
         ("REGIONS", "On its own line, output exactly: %%MGR_REGIONS%%\nAfter the token: 2-3 bullets on which regions are driving the group's result, up or down."),
         (f"TOP {n} DECREASES (WEEK OVER WEEK, GALLONS)", "On its own line, output exactly: %%MGR_DEC%%\nAfter the token: 1-2 bullets on rep or region concentration. Always say which region an account is in."),
         (f"TOP {n} NEWLY DARK ACCOUNTS", "On its own line, output exactly: %%MGR_DARK%%\nAfter the token: 1-2 bullets on the largest dark accounts. Always say which region an account is in."),
         (f"TOP {n} INCREASES (WEEK OVER WEEK, GALLONS)", "On its own line, output exactly: %%MGR_INC%%\nAfter the token: 1-2 bullets on the largest gainers. Always say which region an account is in."),
-        ("KEY TAKEAWAYS", "3 bullets. Each names a specific account (with its region), region or rep, states a specific number from this document, and surfaces an observation."),
+        ("KEY TAKEAWAYS", "3 bullets. Each names a specific account (with its region, or its team for Truck Care), region or rep, states a specific number from this document, and surfaces an observation."),
         ("CLOSING", "One sentence. Factual only."),
     ]
+    if inside_ttc:
+        ttc_body = ["### By Team\nOn its own line, output exactly: %%MGR_TTC_SUMMARY%%",
+                    "After the table token above: 2-3 bullets on the YoY direction for Tires, PM, TCE Spend per Truck and Labor Hours.",
+                    f"### Top {n} Declines by Metric (week over week)"]
+        for sheet in TTC_METRIC_SHEETS:
+            ttc_body.append(f"#### {TTC_HEADING[sheet]}\nOn its own line, output exactly: {TTC_TOKEN[sheet].replace('EXEC_', 'MGR_')}")
+        ttc_body.append("After all four tokens: 2-3 bullets on the largest declines and any accounts that appear under more than one metric.")
+        sections.insert(5, ("TRUCK CARE", "\n".join(ttc_body)))
     prompt = "\n".join(lines) + f"""
 
 ---
@@ -857,7 +895,7 @@ OUTPUT FORMAT -- follow this exact order:
 
 {_number_sections(sections)}
 """
-    return prompt, table_map, len(dec) + len(dark) + len(inc)
+    return prompt, table_map, flagged
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -984,8 +1022,12 @@ def build_leadership_items(fuel_path, alignment, report_date, ttc_results=None, 
                             if c in present and is_open_seat((alignment["regions"].get(c) or {}).get("rep")))
         if open_codes:
             warnings.append("Includes open-seat region(s): " + ", ".join(open_codes))
+        if not ttc_results:
+            warnings.append("No Truck Care reports uploaded -- this brief will be fuel only")
+        elif not ttc_inside_view(ttc_results):
+            warnings.append("No Inside Sales Truck Care team found in the Truck Care reports -- this brief will be fuel only")
         warnings += region_notes
-        prompt, table_map, flagged = build_manager_prompt(label, groups, managers, group_accts, alignment, report_date, region_report)
+        prompt, table_map, flagged = build_manager_prompt(label, groups, managers, group_accts, alignment, report_date, region_report, ttc_results=ttc_results)
         items.append({
             "id": f"mgr-{label.lower().replace(' ', '-')}", "kind": "manager", "label": shown,
             "to_name": " / ".join(managers), "greeting_name": _joined_first_names(managers),
