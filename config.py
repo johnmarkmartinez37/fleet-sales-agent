@@ -7,6 +7,7 @@ FUEL_DECREASE_BUCKETS = [
 ]
 
 FUEL_MAIN_THRESHOLD_GAL = 10000
+FUEL_MIN_DECREASE_GAL = 500      # a week-over-week fuel decrease smaller than this is never listed (rep briefs)
 NON_FUEL_ALERT_PCT = 20
 CUSTOMER_DATA_START_ROW = 7
 REGION_DATA_START_ROW = 6
@@ -116,6 +117,7 @@ EMAIL_OVERRIDES = {
     "Stephen Kelly": "steve.kelly@loves.com",
     "Rigoberto Martinez": "rigo.martinez@loves.com",
     "Larry Masiulis": "Laurynas.Masiulis@loves.com",
+    "Chris McGee": "Christopher.McGee@loves.com",
 }
 
 # ── Leadership emails (executive summary + the combined Inside Sales brief) ──────
@@ -126,17 +128,38 @@ EXEC_SUBJECT_LABEL = "Fleet Sales Executive Summary"
 MANAGER_BRIEFS = [
     {"label": "Inside Sales",
      "groups": ["Inside East", "Inside West"],          # group names on the alignment file's FUEL tab
-     "managers": ["Kelvin Ling", "Megan Dwarshuis"],
+     "managers": ["Kelvin Ling", "Megan Dwarshuis", "Todd Wilson"],
      "subject": "Inside Sales Weekly Brief",
      "file_stem": "Inside_Sales_Weekly_Brief"},
 ]
-# Executive summary for each regional VP: same layout as the executive summary, limited to that VP's fuel groups and
-# Truck Care team. National, Aggregators and the TTC National Accounts team are not included.
-VP_BRIEFS = [
-    {"label": "East", "groups": ["East", "Inside East"], "ttc_managers": ["Brett Moody"],
-     "recipients": ["Steve Bennett"], "subject": "East Fleet Sales Executive Summary", "file_stem": "East_Executive_Summary"},
-    {"label": "West", "groups": ["West", "Inside West"], "ttc_managers": ["TJ Atwood"],
-     "recipients": ["Todd Wilson"], "subject": "West Fleet Sales Executive Summary", "file_stem": "West_Executive_Summary"},
+# High-level summaries for the VP and the four quadrant leads. Each one is the executive layout limited to its own scope.
+#   fuel: {"groups": [...]}   fuel groups from the alignment file's FUEL tab ("Inside Sales" = Inside East + Inside West, see GROUP_MERGES)
+#         {"regions": [...]}  specific regions (a quadrant lead's regions; Region 29 is counted inside 26 -- see REGION_ROLLUPS)
+#   ttc:  {"teams": [...]}    whole Truck Care teams (by senior manager)
+#         {"reps": True}      Truck Care customers whose fuel salesperson is one of the reps in the fuel "regions" above
+#   Set fuel or ttc to None to leave it out of that email.
+SCOPE_BRIEFS = [
+    {"id": "todd-fuel", "recipients": ["Todd Wilson"], "title": "REGIONAL FUEL EXECUTIVE SUMMARY",
+     "subject": "Regional Fuel Executive Summary", "file_stem": "Regional_Fuel_Executive_Summary",
+     "fuel": {"groups": ["East", "West", "Inside Sales"]}, "ttc": None},
+    {"id": "todd-ttc", "recipients": ["Todd Wilson"], "title": "REGIONAL TRUCK CARE EXECUTIVE SUMMARY",
+     "subject": "Regional Truck Care Executive Summary", "file_stem": "Regional_Truck_Care_Executive_Summary",
+     "fuel": None, "ttc": {"teams": ["Brett Moody", "TJ Atwood"]}},
+    {"id": "steve-east", "recipients": ["Steve Bennett"], "title": "EAST FLEET SALES EXECUTIVE SUMMARY",
+     "subject": "East Fleet Sales Executive Summary", "file_stem": "East_Executive_Summary",
+     "fuel": {"groups": ["East"]}, "ttc": {"teams": ["Brett Moody"]}},
+    {"id": "quad-kevin", "recipients": ["Kevin Jernigan"], "title": "REGIONS 20, 21, 22 AND 26 WEEKLY BRIEF",
+     "subject": "Regions 20, 21, 22 and 26 Weekly Brief", "file_stem": "Regions_20_21_22_26_Weekly_Brief",
+     "fuel": {"regions": ["20", "21", "22", "26"]}, "ttc": {"reps": True}},
+    {"id": "quad-adam", "recipients": ["Adam Troester"], "title": "REGIONS 23, 24 AND 25 WEEKLY BRIEF",
+     "subject": "Regions 23, 24 and 25 Weekly Brief", "file_stem": "Regions_23_24_25_Weekly_Brief",
+     "fuel": {"regions": ["23", "24", "25"]}, "ttc": {"reps": True}},
+    {"id": "quad-chris", "recipients": ["Chris McGee"], "title": "REGIONS 10, 12 AND 13 WEEKLY BRIEF",
+     "subject": "Regions 10, 12 and 13 Weekly Brief", "file_stem": "Regions_10_12_13_Weekly_Brief",
+     "fuel": {"regions": ["10", "12", "13"]}, "ttc": {"reps": True}},
+    {"id": "quad-kelvin", "recipients": ["Kelvin Ling"], "title": "REGIONS 11, 14 AND 16 WEEKLY BRIEF",
+     "subject": "Regions 11, 14 and 16 Weekly Brief", "file_stem": "Regions_11_14_16_Weekly_Brief",
+     "fuel": {"regions": ["11", "14", "16"]}, "ttc": {"reps": True}},
 ]
 # Groups shown as ONE row in the executive summary's region group table (sum of the member groups).
 GROUP_MERGES = {"Inside Sales": ["Inside East", "Inside West"]}
@@ -158,8 +181,5 @@ REGION_ROLLUPS = {"29": "26"}
 
 # Extra people copied on a region's weekly brief, on top of that region's Area Managers.
 # Key = region number (as text), value = full names as they should be turned into First.Last@loves.com.
-EXTRA_CC = {
-    "11": ["Kelvin Ling"],
-    "14": ["Kelvin Ling"],
-    "16": ["Kelvin Ling"],
-}
+# Kelvin is no longer copied on Regions 11, 14 and 16: he and the other quadrant leads get their own summary instead.
+EXTRA_CC = {}
