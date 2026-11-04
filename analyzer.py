@@ -1,7 +1,7 @@
 import openpyxl
 from config import (
     CUSTOMER_COLS, REGION_COLS, FUEL_DECREASE_BUCKETS,
-    FUEL_MAIN_THRESHOLD_GAL, NON_FUEL_ALERT_PCT,
+    FUEL_MAIN_THRESHOLD_GAL, FUEL_MIN_DECREASE_GAL, NON_FUEL_ALERT_PCT,
     METRIC_SHEETS, FUEL_SHEET, METRIC_UNITS,
     CUSTOMER_DATA_START_ROW, REGION_DATA_START_ROW
 )
@@ -120,6 +120,8 @@ def analyze_customer_fuel(ws):
         }
 
         if wow_pct < 0 and bucket is not None:
+            if abs(vol_change) < FUEL_MIN_DECREASE_GAL:
+                continue          # too small to matter (e.g. -27 GAL)
             if is_main:
                 if current_week >= FUEL_MAIN_MIN_CURRENT_GAL:
                     main_alerts.append(record)
