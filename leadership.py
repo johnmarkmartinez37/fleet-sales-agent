@@ -1,4 +1,4 @@
-"""Leadership emails: the executive summary, the East / West VP summaries and the combined Inside Sales (Inside East + Inside West) brief.
+"""Leadership emails: the executive summary, the VP / quadrant-lead summaries and the combined Inside Sales (Inside East + Inside West) brief.
 
 Every number and every table is computed here in Python from the 13-week customer report. Claude is only
 asked to write short commentary around bare %%TOKEN%% placeholders, exactly like the rep briefs.
@@ -14,7 +14,7 @@ from analyzer import safe_float, clean_field, find_last_known_value, NEWLY_DARK_
 from config import (
     CUSTOMER_COLS, CUSTOMER_DATA_START_ROW, FUEL_SHEET,
     TTC_METRIC_SHEETS, TTC_METRIC_UNITS, TTC_KNOWN_MANAGERS, TTC_EMAIL_LABELS, TTC_INSIDE_LABEL,
-    EXEC_RECIPIENTS, EXEC_SUBJECT_LABEL, MANAGER_BRIEFS, GROUP_MERGES, VP_BRIEFS,
+    EXEC_RECIPIENTS, EXEC_SUBJECT_LABEL, MANAGER_BRIEFS, GROUP_MERGES, SCOPE_BRIEFS,
     REGION_DATA_START_ROW, REGION_ROLLUPS,
     LEADERSHIP_TOP_N, MANAGER_TOP_N, EXEC_EXCLUDE_30PCT_MOVES, EXEC_TTC_EXCLUDE_30PCT_MOVES, EXEC_LIST_EXCLUDED_REGIONS,
 )
@@ -684,123 +684,232 @@ OUTPUT FORMAT -- follow this exact order:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Regional VP summary (East / West): the executive summary limited to one side of the business
+# Scope briefs: Todd (fuel / Truck Care), Steve (East) and the four quadrant leads.
+# Each is the executive summary limited to one slice of the business (see SCOPE_BRIEFS in config.py).
 # ═══════════════════════════════════════════════════════════════════════════════
-def build_vp_prompt(label, groups, ttc_managers, recipients, accts, alignment, report_date,
-                    ttc_results=None, region_report=None, n=LEADERSHIP_TOP_N):
+def _group_members(name):
+    return list(GROUP_MERGES.get(name, [name]))
+
+
+def _norm_name(n):
+    return " ".join(str(n or "").split()).lower()
+
+
+def scope_codes(spec, alignment):
+    """Region codes covered by a scope brief's fuel part."""
+    fuel = spec.get("fuel") or {}
     codes = set()
-    for g in groups:
-        codes |= set(alignment["groups"].get(g) or [])
-    scope_accts = [a for a in accts if a["region"] in codes]
-    member_rows = [region_report["groups"][g] for g in groups if region_report and g in region_report["groups"]]
-    if region_report and len(member_rows) == len(groups):
-        t = totals_from_row(merge_region_rows(member_rows, label))
-        group_ctx_src = [(g, totals_from_row(region_report["groups"][g])) for g in groups]
-        recs = [r for r in region_recs_from_region(region_report, codes=codes) if r["t"]["ly"] > 0]
+    if "groups" in fuel:
+        for g in fuel["groups"]:
+            for m in _group_members(g):
+                codes |= set(alignment["groups"].get(m) or [])
     else:
-        gmap = group_map(alignment)
-        t = totals(scope_accts)
-        group_ctx_src = [(g, totals([a for a in scope_accts if gmap.get(a["region"]) == g])) for g in groups]
-        recs = [r for r in region_rollups(scope_accts, alignment) if r["t"]["ly"] > 0]
-    gtable = md_table(GROUP_HEADERS, [group_row(g, gt) for g, gt in group_ctx_src] + [group_row(f"**Total ({' + '.join(groups)})**", t)])
-    ranked = sorted(recs, key=lambda r: r["t"]["yoy"], reverse=True)
-    up = [r for r in ranked if r["t"]["yoy"] > 0][:5]
-    down = [r for r in reversed(ranked) if r["t"]["yoy"] < 0][:5]
+        codes |= set(fuel.get("regions") or [])
+    return codes
 
-    list_accts = [a for a in scope_accts if a["region"] not in EXEC_LIST_EXCLUDED_REGIONS]
-    dec = pick_decreases(list_accts, n, exclude_30=EXEC_EXCLUDE_30PCT_MOVES)
-    dark = pick_dark(list_accts, n)
-    inc = pick_increases(list_accts, n, exclude_30=EXEC_EXCLUDE_30PCT_MOVES)
 
-    table_map = {
-        "%%VP_HEADLINE%%": headline_table(t, " + ".join(groups)),
-        "%%VP_GROUP_TABLE%%": gtable,
-        "%%VP_REGION_UP%%": md_table(REGION_HEADERS, region_rows(up)),
-        "%%VP_REGION_DOWN%%": md_table(REGION_HEADERS, region_rows(down)),
-        "%%VP_DEC%%": md_table(CHANGE_HEADERS, change_rows(dec)),
-        "%%VP_DARK%%": md_table(DARK_HEADERS, dark_rows(dark)),
-        "%%VP_INC%%": md_table(CHANGE_HEADERS, change_rows(inc)),
-    }
-    team_names = " and ".join(TTC_TEAM(m) for m in ttc_managers)
-    lines = [f"{label.upper()} FLEET SALES EXECUTIVE SUMMARY — Period Ending {report_date}", "=" * 60,
-             f"\nSCOPE: {label} only -- the {' and '.join(groups)} fuel accounts" + (f" and the {team_names} Truck Care team" if ttc_results else "") +
-             ". Nothing outside this scope is included. YoY compares this week to the same week last year."]
-    lines += _ctx_list("FUEL HEADLINE (for context only)", _headline_ctx(t))
-    group_ctx = []
-    for g, gt in group_ctx_src:
-        group_ctx.append(f"{g}: this week {fmt_plain(gt['current'], 'GAL')} | YoY vs same week last year {fmt_signed(gt['yoy'], 'GAL')} ({pct(gt['yoy'], gt['ly'])}) | "
-                         f"vs 13-week average {pct(gt['vs_avg'], gt['avg'])} | 13-week average YoY {fmt_signed(gt['avg_yoy'], 'GAL')} ({pct(gt['avg_yoy'], gt['ly_avg'])}) | WoW {fmt_signed(gt['wow'], 'GAL')}")
-    lines += _ctx_list("GROUPS (for context only)", group_ctx)
-    reg_line = lambda r: (f"Region {r['code']} ({r['rep']}): YoY vs same week last year {fmt_signed(r['t']['yoy'], 'GAL')} ({pct(r['t']['yoy'], r['t']['ly'])}) | "  # noqa: E731
-                          f"vs 13-week average {pct(r['t']['vs_avg'], r['t']['avg'])} | 13-week average YoY {pct(r['t']['avg_yoy'], r['t']['ly_avg'])}")
-    lines += _ctx_list("STRONGEST REGIONS VS. LAST YEAR (for context only)", [reg_line(r) for r in up])
-    lines += _ctx_list("WEAKEST REGIONS VS. LAST YEAR (for context only)", [reg_line(r) for r in down])
-    lines += _ctx_list(f"TOP {n} BIGGEST WEEK-OVER-WEEK DECREASES (for context only)", _change_ctx(dec))
-    lines += _ctx_list(f"TOP {n} NEWLY DARK ACCOUNTS (for context only)", _dark_ctx(dark))
-    lines += _ctx_list(f"TOP {n} BIGGEST WEEK-OVER-WEEK INCREASES (for context only)", _change_ctx(inc))
+def scope_reps(codes, alignment):
+    """Fuel salesperson names (normalised) for the regions in scope, including any region counted inside one of them."""
+    src = set(codes)
+    for s_, d_ in REGION_ROLLUPS.items():
+        if d_ in codes:
+            src.add(s_)
+    reps = set()
+    for c in src:
+        rep = (alignment["regions"].get(c) or {}).get("rep")
+        if rep and not is_open_seat(rep):
+            reps.add(_norm_name(rep))
+    return reps
 
-    flagged = len(dec) + len(dark) + len(inc)
-    has_ttc = bool(ttc_results) and any(ttc_results.get("manager_rollups", {}).get(m) for m in ttc_managers)
+
+def ttc_reps_view(ttc_results, reps):
+    """Truck Care customer records (all three teams) whose fuel salesperson is one of `reps`."""
+    cr = {}
+    for m in TTC_KNOWN_MANAGERS:
+        cr[m] = {sheet: [r for r in recs if _norm_name(r.get("salesperson")) in reps]
+                 for sheet, recs in (ttc_results.get("customer_records", {}).get(m, {}) or {}).items()}
+    return {"customer_records": cr, "manager_rollups": {}}
+
+
+def ttc_reps_summary(view, label):
+    """Scope total per Truck Care metric. Tires / PM / Labor Hrs are counts, so they add up across customers.
+    TCE Spend per Truck is a per-truck ratio and can't be added, so it has no total row (its top-10 table is still shown)."""
+    rows, ctx = [], []
+    for sheet in TTC_METRIC_SHEETS:
+        if sheet == "TCE Spend per Truck":
+            continue
+        recs = [r for m in TTC_KNOWN_MANAGERS for r in view["customer_records"].get(m, {}).get(sheet, [])]
+        if not recs:
+            continue
+        unit = TTC_METRIC_UNITS.get(sheet, "")
+        tw = sum(r["this_week"] or 0 for r in recs)
+        av = sum(r["avg_13wk"] or 0 for r in recs)
+        yy = sum(r["yoy"] or 0 for r in recs)
+        vs = (tw - av) / av * 100 if av > 0 else None
+        vs_txt = "N/A" if vs is None else f"{'+' if vs > 0 else ''}{vs:.1f}%"
+        rows.append([label, sheet, fmt_plain(tw, unit), fmt_plain(av, unit), vs_txt, fmt_signed(yy, unit)])
+        ctx.append(f"{label} | {sheet}: this week {fmt_plain(tw, unit)} | 13Wk avg {fmt_plain(av, unit)} | vs 13-week average {vs_txt} | YoY vs same week last year {fmt_signed(yy, unit)}")
+    return md_table(["Scope", "Metric", "This Week", "13Wk Avg", "vs. 13Wk Avg", "YoY vs Same Wk LY"], rows), ctx, len(rows)
+
+
+def _list_names(items):
+    items = list(items)
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def build_scope_prompt(spec, accts, alignment, report_date, ttc_results=None, region_report=None, n=LEADERSHIP_TOP_N):
+    recips, fuel, ttc, title = spec["recipients"], spec.get("fuel"), spec.get("ttc"), spec["title"]
+    table_map, lines, sections, flagged = {}, [], [], 0
+    codes = scope_codes(spec, alignment) if fuel else set()
+    by_groups = bool(fuel) and "groups" in fuel
+    scope_bits = []
+
+    if fuel:
+        scope_accts = [a for a in accts if a["region"] in codes]
+        if by_groups:
+            names = fuel["groups"]
+            members = {nm: _group_members(nm) for nm in names}
+            if region_report and all(g in region_report["groups"] for ms in members.values() for g in ms):
+                grows = {nm: (region_report["groups"][ms[0]] if len(ms) == 1 else merge_region_rows([region_report["groups"][g] for g in ms], nm))
+                         for nm, ms in members.items()}
+                group_ts = {nm: totals_from_row(r) for nm, r in grows.items()}
+                t = totals_from_row(merge_region_rows(list(grows.values()), "scope"))
+                recs = [r for r in region_recs_from_region(region_report, codes=codes) if r["t"]["ly"] > 0]
+            else:
+                gmap = group_map(alignment)
+                group_ts = {nm: totals([a for a in scope_accts if gmap.get(a["region"]) in ms]) for nm, ms in members.items()}
+                t = totals(scope_accts)
+                recs = [r for r in region_rollups(scope_accts, alignment) if r["t"]["ly"] > 0]
+            scope_label = " + ".join(names)
+            scope_bits.append(f"the {_list_names(names)} fuel accounts")
+        else:
+            rrows = [region_report["regions"][c] for c in sorted(codes) if region_report and c in region_report["regions"]]
+            if region_report and len(rrows) == len(codes):
+                t = totals_from_row(merge_region_rows(rrows, "scope"))
+                recs = region_recs_from_region(region_report, codes=codes)
+            else:
+                t = totals(scope_accts)
+                recs = region_rollups(scope_accts, alignment)
+            scope_label = "Regions " + ", ".join(sorted(codes, key=lambda c: (len(c), c)))
+            scope_bits.append(f"the fuel accounts in {scope_label}")
+
+        list_accts = [a for a in scope_accts if a["region"] not in EXEC_LIST_EXCLUDED_REGIONS]
+        dec = pick_decreases(list_accts, n, exclude_30=EXEC_EXCLUDE_30PCT_MOVES)
+        dark = pick_dark(list_accts, n)
+        inc = pick_increases(list_accts, n, exclude_30=EXEC_EXCLUDE_30PCT_MOVES)
+        table_map["%%SC_HEADLINE%%"] = headline_table(t, scope_label)
+        table_map["%%SC_DEC%%"] = md_table(CHANGE_HEADERS, change_rows(dec))
+        table_map["%%SC_DARK%%"] = md_table(DARK_HEADERS, dark_rows(dark))
+        table_map["%%SC_INC%%"] = md_table(CHANGE_HEADERS, change_rows(inc))
+        flagged += len(dec) + len(dark) + len(inc)
+
+        lines += _ctx_list("FUEL HEADLINE (for context only)", _headline_ctx(t))
+        sections.append(("FUEL VOLUME — YEAR OVER YEAR",
+                         "On its own line, output exactly: %%SC_HEADLINE%%\nAfter the token: 2-3 bullets. Lead with the YoY result for the week and the 13-week average YoY result, then the week-over-week and vs.-average movement. Quote the figures from the headline above."))
+        reg_line = lambda r: (f"Region {r['code']} ({r['rep']}): this week {fmt_plain(r['t']['current'], 'GAL')} | WoW {fmt_signed(r['t']['wow'], 'GAL')} | "  # noqa: E731
+                              f"YoY vs same week last year {fmt_signed(r['t']['yoy'], 'GAL')} ({pct(r['t']['yoy'], r['t']['ly'])}) | "
+                              f"vs 13-week average {pct(r['t']['vs_avg'], r['t']['avg'])} | 13-week average YoY {fmt_signed(r['t']['avg_yoy'], 'GAL')} ({pct(r['t']['avg_yoy'], r['t']['ly_avg'])})")
+        if by_groups:
+            ranked = sorted(recs, key=lambda r: r["t"]["yoy"], reverse=True)
+            up = [r for r in ranked if r["t"]["yoy"] > 0][:5]
+            down = [r for r in reversed(ranked) if r["t"]["yoy"] < 0][:5]
+            table_map["%%SC_REGION_UP%%"] = md_table(REGION_HEADERS, region_rows(up))
+            table_map["%%SC_REGION_DOWN%%"] = md_table(REGION_HEADERS, region_rows(down))
+            body = ""
+            if len(names) > 1:
+                table_map["%%SC_GROUP_TABLE%%"] = md_table(
+                    GROUP_HEADERS, [group_row(nm, gt) for nm, gt in group_ts.items()] + [group_row(f"**Total ({scope_label})**", t)])
+                body += "On its own line, output exactly: %%SC_GROUP_TABLE%%\n"
+                lines += _ctx_list("GROUPS (for context only)", [
+                    f"{nm}: this week {fmt_plain(gt['current'], 'GAL')} | YoY vs same week last year {fmt_signed(gt['yoy'], 'GAL')} ({pct(gt['yoy'], gt['ly'])}) | "
+                    f"vs 13-week average {pct(gt['vs_avg'], gt['avg'])} | 13-week average YoY {fmt_signed(gt['avg_yoy'], 'GAL')} ({pct(gt['avg_yoy'], gt['ly_avg'])}) | WoW {fmt_signed(gt['wow'], 'GAL')}"
+                    for nm, gt in group_ts.items()])
+            body += ("### Strongest Regions vs. Last Year\nOn its own line, output exactly: %%SC_REGION_UP%%\n"
+                     "### Weakest Regions vs. Last Year\nOn its own line, output exactly: %%SC_REGION_DOWN%%\n"
+                     "After the table tokens: 2-3 bullets on which " + ("groups and regions" if len(names) > 1 else "regions") + " are driving the YoY result.")
+            sections.append(("YEAR OVER YEAR BY " + ("GROUP" if len(names) > 1 else "REGION"), body))
+            lines += _ctx_list("STRONGEST REGIONS VS. LAST YEAR (for context only)", [reg_line(r) for r in up])
+            lines += _ctx_list("WEAKEST REGIONS VS. LAST YEAR (for context only)", [reg_line(r) for r in down])
+        else:
+            table_map["%%SC_REGIONS%%"] = md_table(REGION_HEADERS, region_rows(recs))
+            sections.append(("REGIONS", "On its own line, output exactly: %%SC_REGIONS%%\nAfter the token: 2-3 bullets on which regions and reps are driving the result, up or down."))
+            lines += _ctx_list("REGIONS (for context only)", [reg_line(r) for r in recs])
+        lines += _ctx_list(f"TOP {n} BIGGEST WEEK-OVER-WEEK DECREASES (for context only)", _change_ctx(dec))
+        lines += _ctx_list(f"TOP {n} NEWLY DARK ACCOUNTS (for context only)", _dark_ctx(dark))
+        lines += _ctx_list(f"TOP {n} BIGGEST WEEK-OVER-WEEK INCREASES (for context only)", _change_ctx(inc))
+        sections += [
+            (f"TOP {n} BIGGEST DECREASES (WEEK OVER WEEK, GALLONS)", "On its own line, output exactly: %%SC_DEC%%\nAfter the token: 2 bullets on concentration by region or rep and the size of the largest losses."),
+            (f"TOP {n} NEWLY DARK ACCOUNTS", "On its own line, output exactly: %%SC_DARK%%\nAfter the token: 2 bullets on the largest dark accounts and any region or rep concentration."),
+            (f"TOP {n} BIGGEST INCREASES (WEEK OVER WEEK, GALLONS)", "On its own line, output exactly: %%SC_INC%%\nAfter the token: 2 bullets on the largest gainers."),
+        ]
+
+    has_ttc = False
+    if ttc and ttc_results:
+        if "teams" in ttc:
+            teams = ttc["teams"]
+            has_ttc = any(ttc_results.get("manager_rollups", {}).get(m) for m in teams)
+            if has_ttc:
+                sum_table, _ = ttc_summary_table(ttc_results, teams)
+                declines = ttc_decline_lists(ttc_results, n, exclude_30=EXEC_TTC_EXCLUDE_30PCT_MOVES, managers=teams)
+                sum_ctx = []
+                for m in teams:
+                    for sheet in TTC_METRIC_SHEETS:
+                        r = ttc_results.get("manager_rollups", {}).get(m, {}).get(sheet)
+                        if r:
+                            u = TTC_METRIC_UNITS.get(sheet, "")
+                            sum_ctx.append(f"{TTC_TEAM(m)} | {sheet}: this week {fmt_plain(r['this_week'], u)} | 13Wk avg {fmt_plain(r['avg_13wk'], u)} | YoY vs same week last year {fmt_signed(r['yoy'], u)}")
+                scope_bits.append(f"the {_list_names([TTC_TEAM(m) for m in teams])} Truck Care " + ("team" if len(teams) == 1 else "teams"))
+                by_text = "### By Team"
+        else:
+            reps = scope_reps(codes, alignment)
+            view = ttc_reps_view(ttc_results, reps)
+            has_ttc = any(view["customer_records"][m].get(sh) for m in TTC_KNOWN_MANAGERS for sh in TTC_METRIC_SHEETS)
+            if has_ttc:
+                sum_table, sum_ctx, _ = ttc_reps_summary(view, scope_label)
+                declines = ttc_decline_lists(view, n, exclude_30=EXEC_TTC_EXCLUDE_30PCT_MOVES)
+                scope_bits.append(f"the Truck Care customers of the reps in {scope_label}")
+                by_text = "### Totals for These Regions' Customers"
     if has_ttc:
-        sum_table, _ = ttc_summary_table(ttc_results, ttc_managers)
-        table_map["%%VP_TTC_SUMMARY%%"] = sum_table
-        declines = ttc_decline_lists(ttc_results, n, exclude_30=EXEC_TTC_EXCLUDE_30PCT_MOVES, managers=ttc_managers)
+        table_map["%%SC_TTC_SUMMARY%%"] = sum_table
         for sheet in TTC_METRIC_SHEETS:
-            table_map[TTC_TOKEN[sheet].replace("EXEC_", "VP_")] = declines[sheet]["table"]
+            table_map[TTC_TOKEN[sheet].replace("EXEC_", "SC_")] = declines[sheet]["table"]
             flagged += len(declines[sheet]["items"])
-        ttc_ctx = []
-        for m in ttc_managers:
-            for sheet in TTC_METRIC_SHEETS:
-                r = ttc_results.get("manager_rollups", {}).get(m, {}).get(sheet)
-                if r:
-                    u = TTC_METRIC_UNITS.get(sheet, "")
-                    ttc_ctx.append(f"{TTC_TEAM(m)} | {sheet}: this week {fmt_plain(r['this_week'], u)} | 13Wk avg {fmt_plain(r['avg_13wk'], u)} | YoY vs same week last year {fmt_signed(r['yoy'], u)}")
-        lines += _ctx_list("TRUCK CARE TEAM SUMMARY (for context only)", ttc_ctx)
+        lines += _ctx_list("TRUCK CARE SUMMARY (for context only)", sum_ctx)
         for sheet in TTC_METRIC_SHEETS:
             u = declines[sheet]["unit"]
             lines += _ctx_list(f"TOP {n} TRUCK CARE DECLINES — {TTC_HEADING[sheet]} (for context only)",
-                               [f"{v['customer']} | {v['team']} | This week {fmt_plain(v['this_week'], u)} | Prior {fmt_plain(v['prior_week'], u)} | WoW {fmt_signed(v['delta'], u)} | YoY {fmt_signed(v['yoy'], u)}"
+                               [f"{v['customer']} | {v['team']} | TTC rep {v['rep']} | This week {fmt_plain(v['this_week'], u)} | Prior {fmt_plain(v['prior_week'], u)} | WoW {fmt_signed(v['delta'], u)} | YoY {fmt_signed(v['yoy'], u)}"
                                 for v in declines[sheet]["items"]])
-
-    sections = [
-        ("FUEL VOLUME — YEAR OVER YEAR",
-         "On its own line, output exactly: %%VP_HEADLINE%%\nAfter the token: 2-3 bullets. Lead with the YoY result for the week and the 13-week average YoY result, then the week-over-week and vs.-average movement. Quote the figures from the headline above."),
-        ("YEAR OVER YEAR BY GROUP",
-         "On its own line, output exactly: %%VP_GROUP_TABLE%%\n### Strongest Regions vs. Last Year\nOn its own line, output exactly: %%VP_REGION_UP%%\n### Weakest Regions vs. Last Year\nOn its own line, output exactly: %%VP_REGION_DOWN%%\nAfter the three tokens: 2-3 bullets on which groups and regions are driving the YoY result."),
-        (f"TOP {n} BIGGEST DECREASES (WEEK OVER WEEK, GALLONS)",
-         "On its own line, output exactly: %%VP_DEC%%\nAfter the token: 2 bullets on concentration by region or rep and the size of the largest losses."),
-        (f"TOP {n} NEWLY DARK ACCOUNTS",
-         "On its own line, output exactly: %%VP_DARK%%\nAfter the token: 2 bullets on the largest dark accounts and any region or rep concentration."),
-        (f"TOP {n} BIGGEST INCREASES (WEEK OVER WEEK, GALLONS)",
-         "On its own line, output exactly: %%VP_INC%%\nAfter the token: 2 bullets on the largest gainers."),
-    ]
-    if has_ttc:
-        ttc_body = ["### By Team\nOn its own line, output exactly: %%VP_TTC_SUMMARY%%",
-                    "After the table token above: 2-3 bullets on the YoY direction for Tires, PM, TCE Spend per Truck and Labor Hours.",
+        ttc_body = [f"{by_text}\nOn its own line, output exactly: %%SC_TTC_SUMMARY%%",
+                    ("After the table token above: 2-3 bullets on the YoY direction for Tires, PM and Labor Hours (TCE Spend per Truck has no total row in this table because it is a per-truck ratio)."
+                     if ttc and "reps" in ttc else
+                     "After the table token above: 2-3 bullets on the YoY direction for Tires, PM, TCE Spend per Truck and Labor Hours."),
                     f"### Top {n} Declines by Metric (week over week)"]
         for sheet in TTC_METRIC_SHEETS:
-            ttc_body.append(f"#### {TTC_HEADING[sheet]}\nOn its own line, output exactly: {TTC_TOKEN[sheet].replace('EXEC_', 'VP_')}")
+            ttc_body.append(f"#### {TTC_HEADING[sheet]}\nOn its own line, output exactly: {TTC_TOKEN[sheet].replace('EXEC_', 'SC_')}")
         ttc_body.append("After all four tokens: 2-3 bullets on the largest declines and any accounts that appear under more than one metric.")
         sections.append(("TRUCK CARE", "\n".join(ttc_body)))
-    sections.append(("KEY TAKEAWAYS", "3 bullets. Each names a specific account (with its region), region or team, states a specific number from this document, and surfaces an observation."))
-    sections.append(("CLOSING", "One sentence. Factual only."))
 
-    prompt = "\n".join(lines) + f"""
+    sections.append(("KEY TAKEAWAYS", "3 bullets. Each names a specific account (with its region, or its team for Truck Care), region or team, states a specific number from this document, and surfaces an observation."))
+    sections.append(("CLOSING", "One sentence. Factual only."))
+    head = [f"{title} — Period Ending {report_date}", "=" * 60,
+            f"\nSCOPE: {_list_names(scope_bits)} only. Nothing outside this scope is included. YoY compares this week to the same week last year."]
+    prompt = "\n".join(head + lines) + f"""
 
 ---
 INSTRUCTIONS:
-You are the Fleet Sales Intelligence Agent for Love's Travel Stops fleet sales team. Write the executive summary for the {label} vice president ({' and '.join(recipients)}). They focus on year-over-year numbers, so lead with YoY. Cover {label} only: do not mention other regions, other groups, national accounts, or any fleet-wide total.
+You are the Fleet Sales Intelligence Agent for Love's Travel Stops fleet sales team. Write the executive summary for {_list_names(recips)}. They focus on year-over-year numbers, so lead with YoY. Cover only: {_list_names(scope_bits)}. Do not mention other regions, other groups, national accounts, or any fleet-wide total.
 
 {RULES}
 
 OUTPUT FORMAT -- follow this exact order:
 
-## {label.upper()} FLEET SALES EXECUTIVE SUMMARY
+## {title}
 **Period Ending: {report_date}**
 
 {_number_sections(sections)}
 """
-    return prompt, table_map, flagged
+    return prompt, table_map, flagged, has_ttc
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -952,16 +1061,19 @@ def build_leadership_items(fuel_path, alignment, report_date, ttc_results=None, 
         "warnings": warnings, "file_stem": "Executive_Summary",
     })
 
-    # ── Regional VP summaries (East / West) ──
-    for vp in VP_BRIEFS:
-        label, groups, ttc_mgrs, recips = vp["label"], vp["groups"], vp["ttc_managers"], vp["recipients"]
-        shown = f"{label} VP ({', '.join(recips)})"
-        codes = set()
-        for g in groups:
-            codes |= set(alignment["groups"].get(g) or [])
-        missing = [g for g in groups if not alignment["groups"].get(g)]
-        if missing or not codes:
-            skipped.append({"email": shown, "reason": "No " + " / ".join(f"'{g}'" for g in (missing or groups)) + " group on the alignment file's FUEL tab"})
+    # ── Scope briefs: Todd (fuel + Truck Care), Steve (East) and the four quadrant leads ──
+    for spec in SCOPE_BRIEFS:
+        recips = spec["recipients"]
+        shown = f"{', '.join(recips)}: {spec['subject']}"
+        fuel, ttc = spec.get("fuel"), spec.get("ttc")
+        if fuel and "groups" in fuel:
+            missing = [m for g in fuel["groups"] for m in _group_members(g) if not alignment["groups"].get(m)]
+            if missing:
+                skipped.append({"email": shown, "reason": "No " + " / ".join(f"'{g}'" for g in missing) + " group on the alignment file's FUEL tab"})
+                continue
+        codes = scope_codes(spec, alignment) if fuel else set()
+        if fuel and not codes:
+            skipped.append({"email": shown, "reason": "No regions found for this scope on the alignment file"})
             continue
         addrs, bad = [], []
         for r_ in recips:
@@ -971,27 +1083,31 @@ def build_leadership_items(fuel_path, alignment, report_date, ttc_results=None, 
             skipped.append({"email": shown, "reason": "Can't build an address from " + ", ".join(f"'{b_}'" for b_ in bad)})
             continue
         scope_accts = [a for a in accts if a["region"] in codes]
-        if not scope_accts:
-            skipped.append({"email": shown, "reason": f"No customers found for the {label} regions in this report"})
+        if fuel and not scope_accts:
+            skipped.append({"email": shown, "reason": "No customers found for this scope in this report"})
             continue
         warnings = []
         present = {a["region"] for a in scope_accts}
         open_codes = sorted(c for c in codes if c in present and is_open_seat((alignment["regions"].get(c) or {}).get("rep")))
         if open_codes:
             warnings.append("Includes open-seat region(s): " + ", ".join(open_codes))
-        if not ttc_results:
-            warnings.append("No Truck Care reports uploaded -- this summary will be fuel only")
-        elif not any(ttc_results.get("manager_rollups", {}).get(m) for m in ttc_mgrs):
-            warnings.append("No Truck Care data found for " + ", ".join(ttc_mgrs) + " -- this summary will be fuel only")
-        warnings += region_notes
-        prompt, table_map, flagged = build_vp_prompt(label, groups, ttc_mgrs, recips, accts, alignment, report_date, ttc_results, region_report)
+        prompt, table_map, flagged, has_ttc = build_scope_prompt(spec, accts, alignment, report_date, ttc_results, region_report)
+        if ttc and not ttc_results:
+            warnings.append("No Truck Care reports uploaded -- this summary will not include Truck Care")
+        elif ttc and not has_ttc:
+            warnings.append("No Truck Care data found for this scope -- this summary will not include Truck Care")
+        if not fuel and not has_ttc:
+            skipped.append({"email": shown, "reason": "Truck Care reports are needed for this summary"})
+            continue
+        if fuel:
+            warnings += region_notes
         items.append({
-            "id": f"vp-{label.lower()}", "kind": "exec", "label": shown,
+            "id": f"scope-{spec['id']}", "kind": "exec", "label": shown,
             "to_name": " / ".join(recips), "greeting_name": _joined_first_names(recips),
             "to": "; ".join(addrs), "cc": [],
-            "subject": f"{vp['subject']} Period Ending {report_date}",
+            "subject": f"{spec['subject']} Period Ending {report_date}",
             "prompt": prompt, "table_map": table_map, "flagged": flagged,
-            "warnings": warnings, "file_stem": vp["file_stem"],
+            "warnings": warnings, "file_stem": spec["file_stem"],
         })
 
     # ── Manager brief(s): one email addressed to every manager of the combined group ──
