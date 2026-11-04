@@ -1,3 +1,4 @@
+import re
 from config import METRIC_UNITS, INSIDE_SALES_REGIONS
 from alignment import region_key
 
@@ -119,6 +120,14 @@ def build_claude_prompt(results, email_mode=False, region_label=None, inside_reg
     )
     has_regular = any(not inside(a) for a in all_accounts_for_scope)
     has_inside = any(inside(a) for a in all_accounts_for_scope)
+    if not has_regular and not has_inside:
+        # Nothing at all left to list (e.g. every decrease was under the 500 GAL minimum). Pick the layout from the region
+        # itself so the tables still exist (they read "No alerts this period.") and no placeholder is left unreplaced.
+        m_ = re.search(r"\d+(?:\.\d+)?", region_label or "")
+        if m_ and is_inside_sales(m_.group(0), inside_regions):
+            has_inside = True
+        else:
+            has_regular = True
 
     dec_headers = ["Account", "Region", "Rep"] + (["Area Manager"] if show_am else []) + ["This Week", "Prior Week", "WoW Change", "Vol Change"]
 
