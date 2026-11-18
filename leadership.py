@@ -1143,11 +1143,18 @@ def build_leadership_items(fuel_path, alignment, report_date, ttc_results=None, 
         elif not ttc_inside_view(ttc_results):
             warnings.append("No Inside Sales Truck Care team found in the Truck Care reports -- this brief will be fuel only")
         warnings += region_notes
+        cc_addrs = []
+        for n_ in brief.get("cc", []):
+            a_ = make_email(n_)
+            if a_:
+                cc_addrs.append(a_)
+            else:
+                warnings.append(f"Can't build an address for '{n_}' -- not CC'd")
         prompt, table_map, flagged = build_manager_prompt(label, groups, managers, group_accts, alignment, report_date, region_report, ttc_results=ttc_results)
         items.append({
             "id": f"mgr-{label.lower().replace(' ', '-')}", "kind": "manager", "label": shown,
             "to_name": " / ".join(managers), "greeting_name": _joined_first_names(managers),
-            "to": "; ".join(addrs), "cc": [],
+            "to": "; ".join(addrs), "cc": cc_addrs,
             "subject": f"{brief['subject']} Period Ending {report_date}",
             "prompt": prompt, "table_map": table_map, "flagged": flagged,
             "warnings": warnings, "file_stem": brief["file_stem"],
