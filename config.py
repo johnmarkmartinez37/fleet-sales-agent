@@ -118,6 +118,8 @@ EMAIL_OVERRIDES = {
     "Rigoberto Martinez": "rigo.martinez@loves.com",
     "Larry Masiulis": "Laurynas.Masiulis@loves.com",
     "Chris McGee": "Christopher.McGee@loves.com",
+    "Rachael Zedlitz": "rachael.grant@loves.com",
+    "Teresa Walker": "teresa.walker1@loves.com",
 }
 
 # ── Leadership emails (executive summary + the combined Inside Sales brief) ──────
@@ -129,6 +131,7 @@ MANAGER_BRIEFS = [
     {"label": "Inside Sales",
      "groups": ["Inside East", "Inside West"],          # group names on the alignment file's FUEL tab
      "managers": ["Kelvin Ling", "Megan Dwarshuis", "Todd Wilson"],
+     "cc": ["Stephanie Heffington"],                    # copied on this brief
      "subject": "Inside Sales Weekly Brief",
      "file_stem": "Inside_Sales_Weekly_Brief"},
 ]
@@ -183,3 +186,8 @@ REGION_ROLLUPS = {"29": "26"}
 # Key = region number (as text), value = full names as they should be turned into First.Last@loves.com.
 # Kelvin is no longer copied on Regions 11, 14 and 16: he and the other quadrant leads get their own summary instead.
 EXTRA_CC = {}
+
+# FAS Contact Person (column on the alignment file's FUEL tab) is copied on each National / regional rep brief.
+# Inside Sales rep briefs (Regions in the "Inside ..." groups) do not copy the FAS contact; the combined Inside Sales
+# brief copies Stephanie Heffington instead (see MANAGER_BRIEFS "cc"). Region 9 has no FAS contact on the file.
+FAS_CC_ENABLED = True
