@@ -19,7 +19,7 @@ from alignment import (
     region_key, first_name, make_email, is_open_seat, inside_region_codes,
 )
 from config import (
-    REGION_ROLLUPS, EXTRA_CC,
+    REGION_ROLLUPS, EXTRA_CC, FAS_CC_ENABLED,
     EMAIL_EXCLUDED_REGIONS, EMAIL_SIGNOFF, EMAIL_MAX_WORKERS, EMAIL_MAX_TOKENS,
     EMAIL_MODEL, PRICE_INPUT_PER_MTOK, PRICE_OUTPUT_PER_MTOK,
     TTC_KNOWN_MANAGERS, TTC_EMAIL_LABELS,
@@ -95,7 +95,8 @@ def build_fuel_items(results, alignment):
             continue
 
         cc_addrs = []
-        for am in list(entry["area_managers"]) + list(EXTRA_CC.get(code, [])):
+        fas = [] if (not FAS_CC_ENABLED or code in inside_codes or not entry.get("fas")) else [entry["fas"]]
+        for am in list(entry["area_managers"]) + list(EXTRA_CC.get(code, [])) + fas:
             addr = make_email(am)
             if not addr:
                 warnings.append(f"Can't build an address for '{am}' -- not CC'd")
