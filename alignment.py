@@ -80,6 +80,7 @@ def parse_alignment(path):
     c_am = col("Area Manager")
     c_mgr = header.index("Manager") if "Manager" in header else None
     c_dir = header.index("Director") if "Director" in header else None
+    c_fas = header.index("FAS Contact Person") if "FAS Contact Person" in header else None
 
     regions, groups = {}, {}
     current_group = None
@@ -103,6 +104,7 @@ def parse_alignment(path):
             "area_managers": split_names(row[c_am]) if len(row) > c_am else [],
             "manager": _clean(row[c_mgr]) if c_mgr is not None and len(row) > c_mgr else None,
             "director": _clean(row[c_dir]) if c_dir is not None and len(row) > c_dir else None,
+            "fas": _clean(row[c_fas]) if c_fas is not None and len(row) > c_fas else None,
             "group": current_group,
         }
         if current_group:
